@@ -249,12 +249,7 @@ wss.on('connection', (ws) => {
 
                                     room.broadcastAll({
                                         type: 'wave_clear',
-                                        nextWave: room.currentWave,
-                                        scores: Object.entries(room.players).map(([id, pl]) => ({
-                                            playerId: id,
-                                            nickname: pl.nickname,
-                                            score: pl.score
-                                        }))
+                                        nextWave: room.currentWave
                                     });
 
                                     setTimeout(() => {
@@ -445,7 +440,6 @@ function startGameLoop(roomId) {
     }, 50);
 }
 
-// ===== Renderポート対応 =====
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`🎮 ひじきサバイバー マルチプレイサーバー起動`);
