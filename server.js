@@ -3,6 +3,7 @@ const app = express();
 const http = require('http').Server(app);
 const io = require('socket.io')(http);
 
+// 静的ファイルの提供（index.htmlなどが同じフォルダにある前提）
 app.use(express.static(__dirname));
 
 let players = {};
@@ -24,7 +25,6 @@ const ENEMY_TYPES = [
 ];
 
 setInterval(() => {
-    // --- フェーズ同期管理 ---
     if (gameInfo.phase === 'rest') {
         gameInfo.restTimer--;
         if (gameInfo.restTimer <= 0) {
@@ -36,7 +36,6 @@ setInterval(() => {
     }
 
     if (gameInfo.phase === 'battle') {
-        // 敵の移動・攻撃ロジック
         enemies.forEach((en) => {
             let targetId = null;
             let minDis = 999;
@@ -58,7 +57,6 @@ setInterval(() => {
             }
         });
 
-        // 敵のスポーン
         if (enemies.length < 5 + gameInfo.wave * 2 && Math.random() < 0.05) {
             let typeData = ENEMY_TYPES[Math.floor(Math.random() * Math.min(gameInfo.wave, ENEMY_TYPES.length))];
             let angle = Math.random() * Math.PI * 2;
@@ -72,7 +70,7 @@ setInterval(() => {
             }
         }
     } else {
-        enemies = []; // 休憩中は敵を消去
+        enemies = [];
     }
 
     io.emit('update', { players, enemies, drops, info: gameInfo });
@@ -84,7 +82,7 @@ io.on('connection', (socket) => {
             id: socket.id, name: data.name, x: 0, y: 0, 
             hp: 100, maxHp: 100, score: 0, money: 0, 
             angle: 0, isAttacking: false,
-            weaponRange: 1.2 // 初期武器の長さ
+            weaponRange: 1.2
         };
     });
 
@@ -100,7 +98,6 @@ io.on('connection', (socket) => {
         let enIdx = enemies.findIndex(e => e.id === enemyId);
         if (p && enIdx !== -1) {
             let en = enemies[enIdx];
-            // サーバー側で武器の長さを考慮して判定
             let dist = Math.sqrt((p.x - en.x)**2 + (p.y - en.y)**2);
             if (dist < p.weaponRange + 0.3) {
                 en.hp -= 1;
@@ -111,7 +108,7 @@ io.on('connection', (socket) => {
                     gameInfo.killCount++;
                     if (gameInfo.killCount >= gameInfo.targetKills) {
                         gameInfo.phase = 'rest';
-                        gameInfo.restTimer = 30 * 30; // 30秒
+                        gameInfo.restTimer = 30 * 30;
                     }
                 }
             }
@@ -126,15 +123,14 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- ショップ購入同期 ---
     socket.on('buy', (type) => {
         let p = players[socket.id];
-        if (!p || gameInfo.phase !== 'rest') return; // 休憩中のみ購入可
+        if (!p || gameInfo.phase !== 'rest') return;
         
         if (type === 'heal' && p.money >= 50) {
             p.hp = p.maxHp; p.money -= 50;
         } else if (type === 'range' && p.money >= 150) {
-            p.weaponRange += 0.3; p.money -= 150; // 剣を伸ばす
+            p.weaponRange += 0.3; p.money -= 150;
         } else if (type === 'maxhp' && p.money >= 200) {
             p.maxHp += 20; p.hp += 20; p.money -= 200;
         }
@@ -143,5 +139,6 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => { delete players[socket.id]; });
 });
 
+// Renderなどの環境変数のポートを使うように修正
 const PORT = process.env.PORT || 3000;
-http.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+http.listen(PORT, () => console.log('Server running on port ' + PORT));
