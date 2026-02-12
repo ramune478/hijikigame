@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>ひじサバイバー ONLINE</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        /* 豪華なUIデザインの完全復元 */
+        body { 
+            background: #121212; 
+            color: #ffffff; 
+            margin: 0; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center; 
+            height: 100vh; 
+            font-family: 'Hiragino Kaku Gothic ProN', 'Meiryo', sans-serif; 
+            overflow: hidden; 
+        }
+
+        h2 {
+            margin-bottom: 20px;
+            text-shadow: 0 0 10px rgba(0, 204, 255, 0.8), 4px 4px 0 #000;
+            font-size: 32px;
+            letter-spacing: 4px;
+        }
+
+        /* ゲーム画面の外枠 */
+        #game-container { 
+            position: relative; 
+            box-shadow: 0 0 50px rgba(0,0,0,1), 0 0 20px rgba(0, 204, 255, 0.2); 
+            line-height: 0; 
+            border: 4px solid #333;
+            border-radius: 12px; 
+            overflow: hidden; 
+        }
+
+        canvas { 
+            image-rendering: pixelated; 
+            background: #1a1a1a; 
+            width: 432px; 
+            height: 432px; 
+            cursor: crosshair; 
+        }
+
+        /* ミニマップの完全な装飾 */
+        #minimap-root { 
+            position: absolute; 
+            top: 15px; 
+            right: 15px; 
+            width: 100px; 
+            height: 100px; 
+            background: rgba(0, 0, 0, 0.8); 
+            border: 2px solid rgba(0, 204, 255, 0.5); 
+            border-radius: 8px; 
+            z-index: 10; 
+            pointer-events: none;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+        }
+        #minimapCanvas { width: 100%; height: 100%; }
+
+        /* ステータスUIパネルの再構築 */
+        .ui-container { 
+            margin-top: 20px; 
+            padding: 25px; 
+            background: linear-gradient(145deg, #1a1a1a, #0a0a0a); 
+            border-radius: 20px; 
+            text-align: center; 
+            width: 400px; 
+            border: 2px solid #444; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8); 
+        }
+
+        /* HPバーの豪華演出 */
+        .hp-bar-bg { 
+            width: 100%; 
+            height: 24px; 
+            background: #222; 
+            border-radius: 12px; 
+            margin-top: 10px; 
+            border: 2px solid #000; 
+            overflow: hidden; 
+            position: relative; 
+            box-shadow: inset 0 2px 5px rgba(0,0,0,0.5);
+        }
+        #hp-bar-fill { 
+            width: 100%; 
+            height: 100%; 
+            background: linear-gradient(90deg, #2ecc71, #27ae60, #2ecc71); 
+            background-size: 200% 100%;
+            transition: width 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); 
+        }
+
+        /* オーバーレイ共通スタイル */
+        .overlay { 
+            position: absolute; 
+            top: 50%; 
+            left: 50%; 
+            transform: translate(-50%, -50%); 
+            text-align: center; 
+            z-index: 100; 
+        }
+        .box-style { 
+            background: rgba(10, 10, 10, 0.98); 
+            border: 4px solid #00ccff; 
+            padding: 40px; 
+            border-radius: 30px; 
+            min-width: 320px; 
+            box-shadow: 0 0 100px rgba(0,0,0,1), 0 0 20px rgba(0, 204, 255, 0.3); 
+        }
+        .hidden { display: none !important; }
+
+        /* ボタンデザインの統一 */
+        button { 
+            padding: 15px 30px; 
+            font-size: 18px; 
+            font-weight: bold;
+            cursor: pointer; 
+            background: #2c3e50; 
+            color: #fff; 
+            border: 2px solid #34495e; 
+            margin: 10px; 
+            border-radius: 12px; 
+            transition: all 0.2s; 
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        button:hover { 
+            background: #34495e; 
+            border-color: #00ccff; 
+            transform: translateY(-3px); 
+            box-shadow: 0 5px 15px rgba(0, 204, 255, 0.3);
+        }
+        button:active { transform: translateY(0); }
+
+        /* ショップ専用のデザイン */
+        .shop-item { 
+            width: 100%; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            background: #1e272e; 
+            margin: 12px 0; 
+            padding: 16px; 
+            border-radius: 12px; 
+            border: 1px solid #3d3d3d; 
+            cursor: pointer; 
+            transition: background 0.2s;
+        }
+        .shop-item:hover { background: #2f3640; border-color: #f1c40f; }
+        .price { color: #f1c40f; font-weight: bold; font-size: 20px; }
+
+        input { 
+            padding: 16px; 
+            font-size: 22px; 
+            border-radius: 12px; 
+            border: 2px solid #333; 
+            margin-bottom: 30px; 
+            width: 260px; 
+            text-align: center; 
+            background: #000; 
+            color: #00ccff; 
+            outline: none;
+        }
+        input:focus { border-color: #00ccff; }
+    </style>
+</head>
+<body>
+
+    <h2>HIJIKI SURVIVOR <span style="color:#00ccff;">ONLINE</span></h2>
+
+    <div id="setup" class="overlay box-style">
+        <h3 style="color: #00ccff; margin-bottom: 25px; font-size: 24px;">What you're name?</h3>
+        <input type="text" id="name-input" placeholder="ひじき豆" maxlength="10"><br>
+        <button onclick="startGame()" style="background: #27ae60; border-color: #2ecc71;">参加</button>
+    </div>
+
+    <div id="game-view" class="hidden">
+        <div id="game-container">
+            <canvas id="gameCanvas" width="144" height="144"></canvas>
+            
+            <div id="minimap-root">
+                <canvas id="minimapCanvas" width="100" height="100"></canvas>
+            </div>
+            
+            <div id="shop-overlay" class="overlay box-style hidden">
+                <h3 style="color: #f1c40f; margin-bottom: 20px; font-size: 28px; border-bottom: 2px solid #333; padding-bottom: 10px;">🛒 ショップ</h3>
+                <p style="font-size: 20px; margin-bottom: 20px;">所持金: <span id="shop-money" style="color:#f1c40f; font-weight: bold;">0</span></p>
+                
+                <div class="shop-item" onclick="buyItem('range')">
+                    <div style="text-align: left;">
+                        <div style="font-weight: bold;">剣のアップグレード</div>
+                    </div>
+                    <span class="price">$150</span>
+                </div>
+                
+                <div class="shop-item" onclick="buyItem('heal')">
+                    <div style="text-align: left;">
+                        <div style="font-weight: bold;">体力の全回復</div>
+                    </div>
+                    <span class="price">$50</span>
+                </div>
+                
+                <div class="shop-item" onclick="buyItem('maxhp')">
+                    <div style="text-align: left;">
+                        <div style="font-weight: bold;">防弾チョッキ</div>
+                    </div>
+                    <span class="price">$200</span>
+                </div>
+                
+                <br>
+                <button onclick="toggleShop()" style="background: #485460; width: 100%;">ショップを閉じる</button>
+            </div>
+
+            <div id="result-overlay" class="overlay box-style hidden">
+                <h2 style="color:#e74c3c; font-size: 42px; margin: 0; text-shadow: none;">GAME OVER</h2>
+                <div id="res-score" style="font-size: 56px; font-weight: bold; color: #f1c40f; margin: 30px 0; font-family: 'Courier New';">0</div>
+                <button onclick="location.reload()" style="background: #c0392b; border-color: #e74c3c; width: 100%; font-size: 22px;">もう一度戦う</button>
+            </div>
+        </div>
+
+        <div class="ui-container">
+            <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 20px; margin-bottom: 8px;">
+                <div style="color: #2ecc71;">VIT: <span id="hp-display">100</span> / <span id="max-hp-display">100</span></div>
+                <div style="color: #f1c40f;">CASH: $<span id="money-display">0</span></div>
+            </div>
+            <div class="hp-bar-bg"><div id="hp-bar-fill"></div></div>
+            
+            <div style="display: flex; justify-content: space-between; margin-top: 15px; font-size: 14px; border-top: 1px solid #333; padding-top: 10px;">
+                <div style="color: #bdc3c7;">SCORE: <span id="score-display">0</span></div>
+                <div style="color: #00ccff; font-weight: bold;">RANGE: <span id="range-display">1.2</span>m</div>
+            </div>
+
+            <div id="wave-info" style="color: #e67e22; margin-top:20px; font-size: 22px; font-weight: bold; letter-spacing: 2px;">
+                WAITING...
+            </div>
+            
+            <div id="shop-btn-container" class="hidden" style="margin-top: 20px;">
+                <button onclick="toggleShop()" style="background: #f39c12; color: black; width: 100%; font-weight: bold; border-color: #e67e22; font-size: 20px;">🛒 ショップを開く</button>
+            </div>
+        </div>
+    </div>
+
+<script>
+const socket = io();
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const miniCanvas = document.getElementById('minimapCanvas');
+const miniCtx = miniCanvas.getContext('2d');
+
+const CENTER = 4;
+const MAP_SIZE = 64; 
+
+let playerImg = new Image(); playerImg.src = 'hijiki.png';
+
+let myId = null;
+let players = {};
+let enemies = [];
+let drops = [];
+let gameInfo = {};
+let keys = {};
+let isShopOpen = false;
+let isGameStarted = false;
+
+// 剣の振りと判定用のローカル変数
+let attackAnimFrame = 0;
+let myAngle = 0;
+
+function startGame() {
+    let name = document.getElementById('name-input').value || "ひじき豆";
+    socket.emit('join', { name: name });
+    document.getElementById('setup').classList.add('hidden');
+    document.getElementById('game-view').classList.remove('hidden');
+    isGameStarted = true;
+    requestAnimationFrame(loop);
+}
+
+// サーバー同期
+socket.on('update', (data) => {
+    players = data.players;
+    enemies = data.enemies;
+    drops = data.drops;
+    gameInfo = data.info;
+    myId = socket.id;
+
+    if (players[myId]) {
+        const me = players[myId];
+        // UI更新
+        document.getElementById('hp-bar-fill').style.width = (me.hp / me.maxHp * 100) + "%";
+        document.getElementById('hp-display').innerText = Math.ceil(me.hp);
+        document.getElementById('max-hp-display').innerText = me.maxHp;
+        document.getElementById('money-display').innerText = me.money;
+        document.getElementById('score-display').innerText = me.score;
+        document.getElementById('range-display').innerText = (me.weaponRange || 1.2).toFixed(1);
+        document.getElementById('shop-money').innerText = me.money;
+        
+        // 死亡判定
+        if (me.hp <= 0 && document.getElementById('result-overlay').classList.contains('hidden')) {
+            document.getElementById('res-score').innerText = me.score;
+            document.getElementById('result-overlay').classList.remove('hidden');
+        }
+
+        // ショップ・ウェーブ管理
+        const waveInfo = document.getElementById('wave-info');
+        const shopBtn = document.getElementById('shop-btn-container');
+        if (gameInfo.phase === 'rest') {
+            waveInfo.innerHTML = `<span style="color:#f1c40f;">REST TIME</span> - ${Math.ceil(gameInfo.restTimer/30)}s`;
+            shopBtn.classList.remove('hidden');
+        } else {
+            if (isShopOpen) toggleShop(); // 戦闘開始で自動閉店
+            shopBtn.classList.add('hidden');
+            let left = Math.max(0, gameInfo.targetKills - gameInfo.killCount);
+            waveInfo.innerHTML = `<span style="color:#fff;">WAVE ${gameInfo.wave}</span> <span style="font-size:14px; color:#aaa;">(LEFT: ${left})</span>`;
+        }
+    }
+});
+
+// 入力処理
+window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+canvas.addEventListener('mousemove', e => {
+    const r = canvas.getBoundingClientRect();
+    myAngle = Math.atan2(
+        (e.clientY - r.top) * (144 / r.height) - 72, 
+        (e.clientX - r.left) * (144 / r.width) - 72
+    );
+});
+
+// --- 重要：剣の振り＆ダメージ判定の実装 ---
+canvas.addEventListener('mousedown', () => {
+    if (!isGameStarted || isShopOpen || !players[myId] || players[myId].hp <= 0) return;
+
+    // 攻撃アニメーション（10フレーム分）
+    if (attackAnimFrame <= 0) {
+        attackAnimFrame = 10;
+        
+        // 当たり判定のロジック
+        const me = players[myId];
+        const range = me.weaponRange || 1.2;
+        
+        enemies.forEach(en => {
+            const dx = en.x - me.x;
+            const dy = en.y - me.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            
+            // 距離チェック（剣の長さ + 判定の厚み）
+            if (dist < range + 0.6) {
+                const angleToEnemy = Math.atan2(dy, dx);
+                let diff = Math.abs(myAngle - angleToEnemy);
+                if (diff > Math.PI) diff = Math.PI * 2 - diff;
+                
+                // 角度チェック（前方約100度）
+                if (diff < 0.9) {
+                    socket.emit('hit_enemy', en.id);
+                }
+            }
+        });
+    }
+});
+
+function toggleShop() {
+    isShopOpen = !isShopOpen;
+    document.getElementById('shop-overlay').classList.toggle('hidden');
+}
+
+function buyItem(type) {
+    socket.emit('buy', type);
+}
+
+function update() {
+    if (!players[myId] || players[myId].hp <= 0) return;
+
+    let vx = 0, vy = 0;
+    if (keys['w']) vy -= 0.1;
+    if (keys['s']) vy += 0.1;
+    if (keys['a']) vx -= 0.1;
+    if (keys['d']) vx += 0.1;
+
+    // サーバーへパケット送信
+    socket.emit('input', {
+        x: players[myId].x + vx,
+        y: players[myId].y + vy,
+        angle: myAngle,
+        isAttacking: attackAnimFrame > 0
+    });
+
+    if (attackAnimFrame > 0) attackAnimFrame--;
+
+    // アイテム回収判定
+    drops.forEach(d => {
+        const dist = Math.sqrt((players[myId].x - d.x)**2 + (players[myId].y - d.y)**2);
+        if (dist < 0.8) socket.emit('collect_drop', d.id);
+    });
+}
+
+function draw() {
+    ctx.clearRect(0, 0, 144, 144);
+    const me = players[myId] || {x:0, y:0};
+    
+    // 背景（グリッドタイル）
+    const offX = (me.x % 1) * 16, offY = (me.y % 1) * 16;
+    for (let iy = -1; iy <= 10; iy++) {
+        for (let ix = -1; ix <= 10; ix++) {
+            const tx = Math.floor(me.x) + ix - 4, ty = Math.floor(me.y) + iy - 4;
+            if (Math.abs(tx) > MAP_SIZE/2 || Math.abs(ty) > MAP_SIZE/2) {
+                ctx.fillStyle = "#000"; // マップ外
+            } else {
+                ctx.fillStyle = ((Math.abs(tx)+Math.abs(ty)) % 2 === 0) ? "#222" : "#1a1a1a";
+            }
+            ctx.fillRect(ix * 16 - offX, iy * 16 - offY, 16, 16);
+        }
+    }
+
+    // 全プレイヤー描画
+    for (let id in players) {
+        const p = players[id];
+        const dx = (CENTER + (p.x - me.x)) * 16;
+        const dy = (CENTER + (p.y - me.y)) * 16;
+        
+        // キャラクター本体
+        if (playerImg.complete && playerImg.naturalWidth > 0) {
+            ctx.drawImage(playerImg, dx - 8, dy - 8, 16, 16);
+        } else {
+            ctx.fillStyle = (id === myId) ? "#f1c40f" : "#00ccff";
+            ctx.fillRect(dx - 7, dy - 7, 14, 14);
+        }
+        
+        // 剣の描画
+        ctx.save();
+        ctx.translate(dx, dy);
+        // 攻撃アニメーションの角度補正
+        const attacking = (id === myId) ? (attackAnimFrame > 0) : p.isAttacking;
+        ctx.rotate(p.angle + (attacking ? 1.0 : 0));
+        
+        // 剣の影
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.fillRect(8, 0, (p.weaponRange || 1.2) * 10, 4);
+        // 剣本体
+        ctx.fillStyle = attacking ? "#fff" : "#bdc3c7";
+        ctx.fillRect(7, -2, (p.weaponRange || 1.2) * 10, 3);
+        ctx.restore();
+
+        // プレイヤーネーム
+        ctx.font = "bold 9px sans-serif"; 
+        ctx.textAlign = "center";
+        ctx.strokeStyle = "#000";
+        ctx.lineWidth = 2;
+        ctx.strokeText(p.name, dx, dy - 12);
+        ctx.fillStyle = (id === myId) ? "#fff" : "#00ccff";
+        ctx.fillText(p.name, dx, dy - 12);
+    }
+
+    // 敵描画
+    enemies.forEach(en => {
+        const dx = (CENTER + (en.x - me.x)) * 16, dy = (CENTER + (en.y - me.y)) * 16;
+        ctx.fillStyle = en.color;
+        ctx.fillRect(dx - en.size/2, dy - en.size/2, en.size, en.size);
+        // 敵のHPバー（簡易）
+        ctx.fillStyle = "red";
+        ctx.fillRect(dx - 5, dy - 10, 10, 2);
+    });
+
+    // ドロップアイテム
+    drops.forEach(d => {
+        const dx = (CENTER + (d.x - me.x)) * 16, dy = (CENTER + (d.y - me.y)) * 16;
+        ctx.fillStyle = "#f1c40f"; 
+        ctx.beginPath(); 
+        ctx.arc(dx, dy, 2.5, 0, Math.PI * 2); 
+        ctx.fill();
+    });
+
+    drawMinimap();
+}
+
+function drawMinimap() {
+    miniCtx.clearRect(0, 0, 100, 100);
+    // マップ枠
+    miniCtx.strokeStyle = "rgba(0, 204, 255, 0.3)";
+    miniCtx.strokeRect(50 - MAP_SIZE/2, 50 - MAP_SIZE/2, MAP_SIZE, MAP_SIZE);
+    
+    // 敵（赤）
+    miniCtx.fillStyle = "#ff4757";
+    enemies.forEach(en => miniCtx.fillRect(50 + en.x - 1, 50 + en.y - 1, 2, 2));
+    
+    // 他プレイヤー（青）
+    miniCtx.fillStyle = "#1e90ff";
+    for (let id in players) {
+        if (id !== myId) miniCtx.fillRect(50 + players[id].x - 1, 50 + players[id].y - 1, 2, 2);
+    }
+    
+    // 自分（黄）
+    miniCtx.fillStyle = "#ffa502";
+    if (players[myId]) miniCtx.fillRect(50 + players[myId].x - 1.5, 50 + players[myId].y - 1.5, 3, 3);
+}
+
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>
