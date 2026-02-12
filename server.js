@@ -445,8 +445,9 @@ function startGameLoop(roomId) {
     }, 50);
 }
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`🎮 ひじきサバイバー マルチプレイサーバー`);
-    console.log(`📍 http://localhost:${PORT}`);
+// ===== Renderポート対応 =====
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`🎮 ひじきサバイバー マルチプレイサーバー起動`);
+    console.log(`📍 ポート: ${PORT}`);
 });
