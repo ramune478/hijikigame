@@ -143,4 +143,4 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => { delete players[socket.id]; });
 });
 
-http.listen(3000, () => console.log('Server running on http://localhost:3000'));
+const socket = io("https://your-game.onrender.com");
