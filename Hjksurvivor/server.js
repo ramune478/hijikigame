@@ -512,6 +512,7 @@ function startGameLoop(roomId) {
             const typeIndex = Math.floor(Math.random() * Math.min(Math.max(room.currentWave, 1), types.length));
             const type = types[typeIndex];
 
+            // pick random alive non-spectator player (exclude spectators from affect)
             const playerList = Object.values(room.players).filter(p => p.isAlive);
             if (playerList.length > 0) {
                 const centerPlayer = playerList[Math.floor(Math.random() * playerList.length)];

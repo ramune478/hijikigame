@@ -329,14 +329,16 @@ function handleServerMessage(data) {
         case 'player_update':
             // ensure we have an entry for this player (fix late-arrival updates)
             if (data.playerId === playerId) {
-                // update self (server-authoritative HP/pos)
-                player.worldX = Number.isFinite(Number(data.worldX)) ? Number(data.worldX) : player.worldX;
-                player.worldY = Number.isFinite(Number(data.worldY)) ? Number(data.worldY) : player.worldY;
-                player.hp = Number.isFinite(Number(data.hp)) ? Number(data.hp) : player.hp;
-                player.score = Number.isFinite(Number(data.score)) ? Number(data.score) : player.score;
-                updateUI();
+                // update self (server-authoritative HP/pos) - only if not spectator
+                if (!isSpectator) {
+                    player.worldX = Number.isFinite(Number(data.worldX)) ? Number(data.worldX) : player.worldX;
+                    player.worldY = Number.isFinite(Number(data.worldY)) ? Number(data.worldY) : player.worldY;
+                    player.hp = Number.isFinite(Number(data.hp)) ? Number(data.hp) : player.hp;
+                    player.score = Number.isFinite(Number(data.score)) ? Number(data.score) : player.score;
+                    updateUI();
+                }
             } else {
-                otherPlayers[data.playerId] = otherPlayers[data.playerId] || { id: data.playerId, nickname: 'player', color: '#ffff00', worldX:0, worldY:0, hp:100, score:0, isAlive:true };
+                otherPlayers[data.playerId] = otherPlayers[data.playerId] || { id: data.playerId, nickname: 'player', color: '#ffff00', worldX:0, worldY:0, hp:100, score:0, isAlive:true, isSpectator:false };
                 otherPlayers[data.playerId].worldX = Number.isFinite(Number(data.worldX)) ? Number(data.worldX) : otherPlayers[data.playerId].worldX;
                 otherPlayers[data.playerId].worldY = Number.isFinite(Number(data.worldY)) ? Number(data.worldY) : otherPlayers[data.playerId].worldY;
                 otherPlayers[data.playerId].hp = Number.isFinite(Number(data.hp)) ? Number(data.hp) : otherPlayers[data.playerId].hp;
@@ -722,6 +724,9 @@ function update() {
         en.worldX = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, en.worldX));
         en.worldY = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, en.worldY));
 
+        // spectators never get hit by enemies
+        if (isSpectator) return;
+
         if (dist < 0.5) {
             if (!player.isInvincible) {
                 player.hp -= en.power;
@@ -850,6 +855,49 @@ function draw() {
     ctx.clearRect(0, 0, 144, 144);
     mCtx.clearRect(0, 0, 100, 100);
 
+    // spectators can't draw their player (silent observation mode)
+    if (isSpectator) {
+        let offX = (player.worldX % 1) * 16, offY = (player.worldY % 1) * 16;
+        for (let iy = -1; iy <= 10; iy++) {
+            for (let ix = -1; ix <= 10; ix++) {
+                let worldTileX = Math.floor(player.worldX) + ix - 4;
+                let worldTileY = Math.floor(player.worldY) + iy - 4;
+                ctx.fillStyle = (Math.abs(worldTileX) > MAP_LIMIT || Math.abs(worldTileY) > MAP_LIMIT) ? "#222" : 
+                                ((Math.abs(worldTileX) + Math.abs(worldTileY)) % 2 === 0 ? "#555" : "#4a4a4a");
+                ctx.fillRect(ix * 16 - offX, iy * 16 - offY, 16, 16);
+            }
+        }
+        // draw other players (spectators included)
+        Object.values(otherPlayers).forEach(p => {
+            if (p.isAlive) {
+                let dx = (CENTER + (p.worldX - player.worldX)) * 16, dy = (CENTER + (p.worldY - player.worldY)) * 16;
+                if (useShapeFallback) {
+                    drawPlayerShapeColored(ctx, dx, dy, 16, p.color);
+                } else {
+                    // spectators are semi-transparent
+                    ctx.globalAlpha = p.isSpectator ? 0.3 : 1.0;
+                    drawTintedHijiki(ctx, p.color || '#ffff00', dx, dy, 16, 16);
+                    ctx.globalAlpha = 1.0;
+                }
+                mCtx.fillStyle = p.color || '#ffff00';
+                mCtx.fillRect(50 + p.worldX*0.78, 50 + p.worldY*0.78, 2, 2);
+            }
+        });
+        // draw enemies
+        enemies.forEach(en => {
+            let dx = (CENTER + (en.worldX - player.worldX)) * 16, dy = (CENTER + (en.worldY - player.worldY)) * 16;
+            let s = en.type === 'heavy' ? 18 : 14;
+            if (useShapeFallback) {
+                drawEnemyShape(ctx, dx + (16-s)/2, dy + (16-s)/2, s, en.type);
+            } else {
+                let sx = SPRITE_POS[en.type] || 32; 
+                ctx.drawImage(spriteSheet, sx, 0, 16, 16, dx + (16-s)/2, dy + (16-s)/2, s, s);
+            }
+            mCtx.fillStyle = en.color; mCtx.fillRect(50 + en.worldX*0.78, 50 + en.worldY*0.78, 2, 2);
+        });
+        return;
+    }
+
     let offX = (player.worldX % 1) * 16, offY = (player.worldY % 1) * 16;
 
     for (let iy = -1; iy <= 10; iy++) {
@@ -918,26 +966,22 @@ function draw() {
     // --- handle immediate enemy_damaged messages (server sends hp + optional pos) ---
     // (handled in handleServerMessage -> case 'enemy_damaged')
 
-    // 他プレイヤーの描画
+    // 他プレイヤーの描画 (観戦者を透明化)
     Object.values(otherPlayers).forEach(p => {
         if (p.isAlive) {
             let dx = (CENTER + (p.worldX - player.worldX)) * 16, dy = (CENTER + (p.worldY - player.worldY)) * 16;
             if (useShapeFallback) {
                 drawPlayerShapeColored(ctx, dx, dy, 16, p.color);
             } else {
+                // spectators are semi-transparent
+                ctx.globalAlpha = p.isSpectator ? 0.3 : 1.0;
                 drawTintedHijiki(ctx, p.color || '#ffff00', dx, dy, 16, 16);
+                ctx.globalAlpha = 1.0;
             }
             mCtx.fillStyle = p.color || '#ffff00';
             mCtx.fillRect(50 + p.worldX*0.78, 50 + p.worldY*0.78, 2, 2);
         }
     });
-
-    if (useShapeFallback) {
-        drawPlayerShape(ctx, 64, 64, 16);
-    } else {
-        drawTintedHijiki(ctx, playerColor || '#00ff00', 64, 64, 16, 16);
-    }
-    mCtx.fillStyle = "#00ff00"; mCtx.fillRect(50 + player.worldX*0.78, 50 + player.worldY*0.78, 3, 3);
 
     ctx.save();
     ctx.translate(72, 72);
