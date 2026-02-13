@@ -517,7 +517,11 @@ function startGameLoop(roomId) {
                 worldX: e.worldX,
                 worldY: e.worldY,
                 type: e.type,
-                hp: e.hp
+                hp: e.hp,
+                speed: e.speed,
+                power: e.power,
+                scoreVal: e.scoreVal,
+                color: (e.type === 'heavy' ? '#9370DB' : (e.type === 'speed' ? 'green' : (e.type === 'scout' ? 'lightblue' : 'blue')))
             })),
             gameState: room.gameState,
             wave: room.currentWave,

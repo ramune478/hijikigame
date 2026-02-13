@@ -268,26 +268,25 @@ function handleServerMessage(data) {
             otherPlayers[data.playerId] = {
                 id: data.playerId,
                 nickname: data.nickname,
-                color: data.color,
-                worldX: data.worldX,
-                worldY: data.worldY,
-                hp: data.hp,
-                score: data.score,
-                isAlive: data.isAlive
+                color: data.color || '#ffff00',
+                worldX: Number.isFinite(Number(data.worldX)) ? Number(data.worldX) : 0,
+                worldY: Number.isFinite(Number(data.worldY)) ? Number(data.worldY) : 0,
+                hp: Number.isFinite(Number(data.hp)) ? Number(data.hp) : 100,
+                score: Number.isFinite(Number(data.score)) ? Number(data.score) : 0,
+                isAlive: data.isAlive !== false
             };
             addChatMessage('システム', `${data.nickname}がゲーム中です`, '#888');
             break;
         case 'player_joined':
-            otherPlayers[data.playerId] = {
-                id: data.playerId,
-                nickname: data.nickname,
-                color: data.color,
-                worldX: 0,
-                worldY: 0,
-                hp: 100,
-                score: 0,
-                isAlive: true
-            };
+            otherPlayers[data.playerId] = otherPlayers[data.playerId] || {};
+            otherPlayers[data.playerId].id = data.playerId;
+            otherPlayers[data.playerId].nickname = data.nickname;
+            otherPlayers[data.playerId].color = data.color || otherPlayers[data.playerId].color || '#ffff00';
+            otherPlayers[data.playerId].worldX = otherPlayers[data.playerId].worldX || 0;
+            otherPlayers[data.playerId].worldY = otherPlayers[data.playerId].worldY || 0;
+            otherPlayers[data.playerId].hp = Number.isFinite(Number(otherPlayers[data.playerId].hp)) ? otherPlayers[data.playerId].hp : 100;
+            otherPlayers[data.playerId].score = Number.isFinite(Number(otherPlayers[data.playerId].score)) ? otherPlayers[data.playerId].score : 0;
+            otherPlayers[data.playerId].isAlive = true;
             addChatMessage('システム', `${data.nickname}が参加しました`, '#00ff00');
             break;
         case 'player_left':
@@ -304,10 +303,32 @@ function handleServerMessage(data) {
             }
             break;
         case 'game_state':
-            enemies = data.enemies;
-            document.getElementById('enemy-count').innerText = data.enemyCount;
-            document.getElementById('kill-count').innerText = data.killCount;
-            document.getElementById('kill-target').innerText = data.targetKills;
+            // accept server enemy list but fill missing properties (avoid NaN)
+            const TYPE_DEFAULTS = {
+                normal: { hp: 2, speed: 0.03, power: 3, scoreVal: 100, color: 'blue' },
+                speed:  { hp: 0.5, speed: 0.13, power: 3, scoreVal: 150, color: 'green' },
+                heavy:  { hp: 4, speed: 0.01, power: 8, scoreVal: 500, color: '#9370DB' },
+                scout:  { hp: 2, speed: 0.03, power: 5, scoreVal: 250, color: 'lightblue' }
+            };
+
+            enemies = (data.enemies || []).map(en => {
+                const def = TYPE_DEFAULTS[en.type] || TYPE_DEFAULTS.normal;
+                return {
+                    id: en.id,
+                    worldX: Number.isFinite(Number(en.worldX)) ? Number(en.worldX) : 0,
+                    worldY: Number.isFinite(Number(en.worldY)) ? Number(en.worldY) : 0,
+                    type: en.type || 'normal',
+                    hp: Number.isFinite(Number(en.hp)) ? Number(en.hp) : def.hp,
+                    speed: Number.isFinite(Number(en.speed)) ? Number(en.speed) : def.speed,
+                    power: Number.isFinite(Number(en.power)) ? Number(en.power) : def.power,
+                    scoreVal: Number.isFinite(Number(en.scoreVal)) ? Number(en.scoreVal) : def.scoreVal,
+                    color: en.color || def.color
+                };
+            });
+
+            document.getElementById('enemy-count').innerText = data.enemyCount || enemies.length;
+            document.getElementById('kill-count').innerText = data.killCount || 0;
+            document.getElementById('kill-target').innerText = data.targetKills || 5;
             break;
         case 'enemy_killed':
             addChatMessage('キル', `${data.playerName}が敵を倒した (+${data.scoreGain})`, '#ffff00');
@@ -821,8 +842,13 @@ function draw() {
     Object.values(otherPlayers).forEach(p => {
         if (p.isAlive) {
             let dx = (CENTER + (p.worldX - player.worldX)) * 16, dy = (CENTER + (p.worldY - player.worldY)) * 16;
-            drawPlayerShapeColored(ctx, dx, dy, 16, p.color);
-            mCtx.fillStyle = p.color;
+            if (useShapeFallback) {
+                drawPlayerShapeColored(ctx, dx, dy, 16, p.color);
+            } else {
+                // draw the same hijiki sprite for other players (no tint)
+                ctx.drawImage(spriteSheet, SPRITE_POS.hijiki, 0, 16, 16, dx, dy, 16, 16);
+            }
+            mCtx.fillStyle = p.color || '#ffff00';
             mCtx.fillRect(50 + p.worldX*0.78, 50 + p.worldY*0.78, 2, 2);
         }
     });
