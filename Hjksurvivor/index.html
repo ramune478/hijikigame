@@ -173,9 +173,12 @@ const mCanvas = document.getElementById('minimap');
 const mCtx = mCanvas.getContext('2d');
 
 let spriteSheet = new Image();
-spriteSheet.src = '../resource/minigame/Hjksurvivor.png';
+// use absolute path so the server can expose /resource
+spriteSheet.src = '/resource/minigame/Hjksurvivor.png';
 let useShapeFallback = false;
+// if load fails, fallback to shapes; also clear fallback on success
 spriteSheet.onerror = () => { useShapeFallback = true; };
+spriteSheet.onload = () => { useShapeFallback = false; }; 
 
 // マルチプレイ変数
 let playerId = null, playerColor = null, roomId = null, ws = null;
@@ -242,7 +245,7 @@ let spawnRateup = 0;
 let shopStock = { speed: 20, range: 10, heal: 5, heal25: 20 };
 let overlayEffect = { text: "", timer: 0, opacity: 0, scale: 1.0 };
 
-const SPRITE_POS = { hijiki: 64, normal: 32, speed: -0.1, heavy: 48, scout: 16 };
+const SPRITE_POS = { hijiki: 64, normal: 32, speed: 0, heavy: 48, scout: 16 }; // fixed sprite positions (speed was invalid)
 
 // ===== WebSocket初期化 =====
 function initWebSocket() {
@@ -396,9 +399,11 @@ function handleChatKeyPress(event) {
         if (message && ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'chat', message: message }));
             input.value = '';
+            input.blur();
+            event.preventDefault();
         }
     }
-}
+} // pressing Enter will send and blur (prevent movement while chatting)
 
 function toggleFriendlyFire() {
     const enabled = document.getElementById('friendly-fire-toggle').checked;
@@ -513,6 +518,8 @@ function useSkill() {
 
 let prevState = gameState;
 function togglePause(){
+    // disable pause during multiplayer and while in chat
+    if (ws && ws.readyState === WebSocket.OPEN) return;
     if (gameState === 'over') return;
     if (gameState !== 'paused') {
         prevState = gameState;
@@ -596,9 +603,16 @@ function update() {
 
     enemies.forEach((en, i) => {
         let edx = player.worldX - en.worldX, edy = player.worldY - en.worldY;
-        let dist = Math.sqrt(edx*edx + edy*edy);
-        en.worldX += edx * (en.speed / dist);
-        en.worldY += edy * (en.speed / dist);
+        let dist = Math.sqrt(edx*edx + edy*edy) || 0;
+        // avoid division-by-zero / NaN movement
+        if (dist > 0.05) {
+            en.worldX += (edx / dist) * en.speed;
+            en.worldY += (edy / dist) * en.speed;
+        } else {
+            // tiny jitter so enemy doesn't become NaN or overlap exactly
+            en.worldX += (Math.random() - 0.5) * 0.02;
+            en.worldY += (Math.random() - 0.5) * 0.02;
+        }
         en.worldX = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, en.worldX));
         en.worldY = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, en.worldY));
 
@@ -627,6 +641,23 @@ function update() {
                 en.hp -= 0.5;
                 if(en.hp <= 0) enemyKilled(en, i);
             }
+        }
+
+        // --- friendly-fire: attack other players when in range and allowed ---
+        if (player.isAttacking && friendlyFireEnabled) {
+            Object.values(otherPlayers).forEach(op => {
+                if (!op.isAlive) return;
+                const pdx = op.worldX - player.worldX, pdy = op.worldY - player.worldY;
+                const pdist = Math.sqrt(pdx*pdx + pdy*pdy) || 0;
+                if (pdist < player.weaponRange) {
+                    const angleToP = Math.atan2(pdy, pdx);
+                    let aDiffP = Math.abs(player.angle - angleToP);
+                    if (aDiffP > Math.PI) aDiffP = Math.PI * 2 - aDiffP;
+                    if (aDiffP < 1.0 && ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'damage_player', targetId: op.id, damage: 0.5 }));
+                    }
+                }
+            });
         }
     });
 
@@ -836,12 +867,21 @@ function loop() {
 }
 
 window.addEventListener('keydown', e => {
+    // ignore game keys while typing in chat
+    const active = document.activeElement && document.activeElement.id === 'chat-input';
+    if (active) return;
+
     keys[e.key.toLowerCase()] = true;
     if(e.code==='Space') useSkill();
-    if(e.key==='p') togglePause();
+    // disable pause in multiplayer
+    if(e.key==='p' && !(ws && ws.readyState === WebSocket.OPEN)) togglePause();
     if(e.key==='x') toggleShop();
 });
-window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+window.addEventListener('keyup', e => {
+    const active = document.activeElement && document.activeElement.id === 'chat-input';
+    if (active) return;
+    keys[e.key.toLowerCase()] = false;
+});
 
 const mobileButtons = { 'btn-up': 'w', 'btn-down': 's', 'btn-left': 'a', 'btn-right': 'd' };
 Object.entries(mobileButtons).forEach(([btnId, key]) => {

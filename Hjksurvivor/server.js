@@ -17,7 +17,9 @@ setInterval(() => {
     });
 }, HEARTBEAT_INTERVAL);
 
+// serve static game client and public resource folder
 app.use(express.static(path.join(__dirname)));
+app.use('/resource', express.static(path.join(__dirname, '..', 'resource'))); // allow /resource/... URLs to work from client
 
 let gameRooms = {};
 let enemyIdCounter = 0;
@@ -202,6 +204,20 @@ wss.on('connection', (ws) => {
                             playerCount: room.getPlayerCount(),
                             friendlyFireEnabled: room.friendlyFireEnabled
                         }));
+
+                        // if the room is already playing, make sure the joining client gets the start + current state
+                        if (room.gameState === 'playing') {
+                            ws.send(JSON.stringify({ type: 'game_start', gameState: 'playing', wave: room.currentWave }));
+                            ws.send(JSON.stringify({
+                                type: 'game_state',
+                                enemies: room.enemies.map(e => ({ id: e.id, worldX: e.worldX, worldY: e.worldY, type: e.type, hp: e.hp })),
+                                gameState: room.gameState,
+                                wave: room.currentWave,
+                                enemyCount: room.enemies.length,
+                                killCount: room.killCount,
+                                targetKills: room.targetKills
+                            }));
+                        }
                     } catch (e) {}
 
                     if (room.getPlayerCount() >= 1 && room.gameState === 'waiting') {
@@ -302,6 +318,37 @@ wss.on('connection', (ws) => {
                                 });
                             }
                         }
+                    }
+                    break;
+
+                case 'damage_player':
+                    // server-authoritative friendly-fire / player damage
+                    if (room && room.players[playerId]) {
+                        const targetId = data.targetId;
+                        const dmg = Number(data.damage) || 0;
+                        const attacker = room.players[playerId];
+                        const target = room.players[targetId];
+                        if (!target || !attacker) break;
+
+                        // respect friendly-fire setting
+                        if (!room.friendlyFireEnabled) break;
+
+                        target.hp = (Number.isFinite(Number(target.hp)) ? Number(target.hp) : 0) - dmg;
+                        if (target.hp <= 0) {
+                            target.hp = 0;
+                            target.isAlive = false;
+                            room.broadcastAll({ type: 'player_died', playerId: targetId, nickname: target.nickname });
+                        }
+
+                        room.broadcastAll({
+                            type: 'player_update',
+                            playerId: targetId,
+                            worldX: target.worldX,
+                            worldY: target.worldY,
+                            hp: target.hp,
+                            score: target.score,
+                            angle: target.angle
+                        });
                     }
                     break;
 
