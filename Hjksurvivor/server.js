@@ -101,6 +101,26 @@ class GameRoom {
             this.loopInterval = null;
         }
     }
+
+    // prune disconnected players/spectators (no open ws) to avoid phantom entries
+    pruneDisconnected() {
+        const removed = [];
+        Object.values(this.players).forEach(p => {
+            if (!p.ws || p.ws.readyState !== WebSocket.OPEN) {
+                removed.push(p.id);
+                delete this.players[p.id];
+            }
+        });
+        Object.values(this.spectators).forEach(s => {
+            if (!s.ws || s.ws.readyState !== WebSocket.OPEN) {
+                removed.push(s.id);
+                delete this.spectators[s.id];
+            }
+        });
+        removed.forEach(id => {
+            try { this.broadcastAll({ type: 'player_left', playerId: id }); } catch (e) {}
+        });
+    }
 }
 
 class Enemy {
@@ -185,10 +205,10 @@ wss.on('connection', (ws) => {
                         return;
                     }
 
-                    // send existing players to the new client (include both players and spectators)
+                    // send existing players to the new client (include both players and spectators) -- only include active WS entries
                     const allUsers = { ...room.players, ...room.spectators };
                     Object.values(allUsers).forEach(p => {
-                        if (p.id !== playerId) {
+                        if (p.id !== playerId && p.ws && p.ws.readyState === WebSocket.OPEN) {
                             try {
                                 ws.send(JSON.stringify({
                                     type: 'existing_player',
@@ -228,8 +248,10 @@ wss.on('connection', (ws) => {
                         }));
 
                         // send full players snapshot to new client (fix: missing earlier-joined players + include spectators)
-                        const allSnap = { ...room.players, ...room.spectators };
-                        const playersSnapshot = Object.values(allSnap).map(p => ({
+                        // only include spectators in snapshot if the joining client is a spectator
+                        const includeSpectators = !!isSpectator;
+                        const snapSource = includeSpectators ? { ...room.players, ...room.spectators } : { ...room.players };
+                        const playersSnapshot = Object.values(snapSource).filter(p => p.ws && p.ws.readyState === WebSocket.OPEN).map(p => ({
                             id: p.id,
                             nickname: p.nickname,
                             color: p.color,
@@ -497,7 +519,12 @@ function startGameLoop(roomId) {
 
     room.loopInterval = setInterval(() => {
         const currentRoom = gameRooms[roomId];
-        if (!currentRoom || currentRoom.gameState !== 'playing' || currentRoom.getPlayerCount() === 0) {
+        if (!currentRoom) return;
+
+        // prune disconnected entries to avoid phantom players/spectators
+        currentRoom.pruneDisconnected();
+
+        if (currentRoom.gameState !== 'playing' || currentRoom.getPlayerCount() === 0) {
             // stop loop if room removed, not playing, or empty
             if (currentRoom) currentRoom.stopLoop();
             else clearInterval(room.loopInterval);

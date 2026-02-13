@@ -544,10 +544,10 @@ function updatePlayersListUI() {
         playersList.appendChild(selfCard);
     }
     Object.values(otherPlayers).forEach(p => {
+        if (p.isSpectator) return; // hide spectators from player list
         const card = document.createElement('div');
-        let label = p.isSpectator ? `👁️ ${p.nickname}` : p.nickname;
         card.className = 'player-card' + (p.isAlive ? '' : ' dead');
-        card.innerHTML = `<div style="color: ${p.color};">${label}</div><div style="font-size: 11px;">HP: ${Math.ceil(p.hp)}/100 | ${p.score}</div>`;
+        card.innerHTML = `<div style="color: ${p.color};">${p.nickname}</div><div style="font-size: 11px;">HP: ${Math.ceil(p.hp)}/100 | ${p.score}</div>`;
         playersList.appendChild(card);
     });
 }
@@ -664,7 +664,20 @@ function buyUpgrade(type) {
 
 function update() {
     if (!gameState || gameState === 'setup' || gameState === 'paused' || gameState === 'over') return;
-    if (isSpectator) return; // spectators don't update
+
+    // Spectator: allow camera movement but no interactions or server updates
+    if (isSpectator) {
+        let dx = 0, dy = 0;
+        if (keys['w'] || keys['arrowup']) dy -= player.moveSpeed;
+        if (keys['s'] || keys['arrowdown']) dy += player.moveSpeed;
+        if (keys['a'] || keys['arrowleft']) dx -= player.moveSpeed;
+        if (keys['d'] || keys['arrowright']) dx += player.moveSpeed;
+        if (dx !== 0 && dy !== 0) { dx *= 0.707; dy *= 0.707; }
+        player.worldX = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, player.worldX + dx));
+        player.worldY = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, player.worldY + dy));
+        // do not send player_update or process attacks/pickups
+        return;
+    }
 
     if (skillEffect > 0) skillEffect--;
     if (beamActive > 0) {
@@ -782,7 +795,8 @@ function update() {
         updateUI();
     }
 
-    if (ws && ws.readyState === WebSocket.OPEN && Math.random() < 0.1) {
+    // send server-authoritative position/HP (but never send when spectating)
+    if (!isSpectator && ws && ws.readyState === WebSocket.OPEN && Math.random() < 0.1) {
         ws.send(JSON.stringify({
             type: 'player_update',
             worldX: player.worldX,
@@ -867,17 +881,14 @@ function draw() {
                 ctx.fillRect(ix * 16 - offX, iy * 16 - offY, 16, 16);
             }
         }
-        // draw other players (spectators included)
+        // draw other players (skip spectators entirely)
         Object.values(otherPlayers).forEach(p => {
-            if (p.isAlive) {
+            if (p.isAlive && !p.isSpectator) {
                 let dx = (CENTER + (p.worldX - player.worldX)) * 16, dy = (CENTER + (p.worldY - player.worldY)) * 16;
                 if (useShapeFallback) {
                     drawPlayerShapeColored(ctx, dx, dy, 16, p.color);
                 } else {
-                    // spectators are semi-transparent
-                    ctx.globalAlpha = p.isSpectator ? 0.3 : 1.0;
                     drawTintedHijiki(ctx, p.color || '#ffff00', dx, dy, 16, 16);
-                    ctx.globalAlpha = 1.0;
                 }
                 mCtx.fillStyle = p.color || '#ffff00';
                 mCtx.fillRect(50 + p.worldX*0.78, 50 + p.worldY*0.78, 2, 2);
@@ -968,15 +979,12 @@ function draw() {
 
     // 他プレイヤーの描画 (観戦者を透明化)
     Object.values(otherPlayers).forEach(p => {
-        if (p.isAlive) {
+        if (p.isAlive && !p.isSpectator) {
             let dx = (CENTER + (p.worldX - player.worldX)) * 16, dy = (CENTER + (p.worldY - player.worldY)) * 16;
             if (useShapeFallback) {
                 drawPlayerShapeColored(ctx, dx, dy, 16, p.color);
             } else {
-                // spectators are semi-transparent
-                ctx.globalAlpha = p.isSpectator ? 0.3 : 1.0;
                 drawTintedHijiki(ctx, p.color || '#ffff00', dx, dy, 16, 16);
-                ctx.globalAlpha = 1.0;
             }
             mCtx.fillStyle = p.color || '#ffff00';
             mCtx.fillRect(50 + p.worldX*0.78, 50 + p.worldY*0.78, 2, 2);
