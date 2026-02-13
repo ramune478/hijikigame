@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ひじきサバイバー</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #222; color: white; margin: 0; padding: 10px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; min-height: 100vh; font-family: sans-serif; overflow-x: hidden; overflow-y: auto; }
+        #game-container { position: relative; display: flex; gap: 20px; align-items: flex-start; justify-content: center; flex-wrap: wrap; }
+        #game-inner { position: relative; }
+        #title { margin: 5px 0; }
+        canvas { border: none; image-rendering: pixelated; background: #333; width: 432px; height: 432px; }
+        #minimap { position: absolute; top: 0px; right: 0px; width: 100px; height: 100px; background: rgba(0, 0, 0, 0.7); border: 2px solid #888; }
+        .ui-container { margin-top: 10px; padding: 15px; background: rgba(0, 0, 0, 0.8); border-radius: 10px; text-align: center; width: 420px; }
+        .hp-bar-bg { width: 100%; height: 12px; background: #333; border-radius: 6px; margin-top: 5px; border: 1px solid #000; overflow: hidden; }
+        #hp-bar-fill { width: 100%; height: 100%; background: #00ff00; transition: width 0.2s; }
+        .skill-bar-bg { width: 100%; height: 8px; background: #111; border-radius: 4px; margin-top: 10px; border: 1px solid #00ccff; overflow: hidden; }
+        #skill-bar-fill { width: 0%; height: 100%; background: #00ccff; }
+        .overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.95); border: 4px solid #fff; padding: 25px; text-align: center; border-radius: 15px; z-index: 100; min-width: 200px; }
+        .hidden { display: none; }
+        button { padding: 8px 15px; font-size: 16px; cursor: pointer; background: #444; color: white; border: 1px solid #666; margin: 5px; border-radius: 5px; }
+        .wiki-link { margin: 10px 0; text-align: center; }
+        .wiki-link a { display: inline-block; padding: 10px 20px; background: #555; color: white; text-decoration: none; border-radius: 5px; border: 1px solid #777; font-size: 14px; transition: background 0.3s; }
+        .wiki-link a:hover { background: #666; }
+        
+        /* マルチプレイパネル */
+        .multiplayer-panel { width: 250px; padding: 15px; background: rgba(0, 0, 0, 0.9); border: 2px solid #00ccff; border-radius: 10px; max-height: 500px; overflow-y: auto; }
+        .player-card { padding: 10px; margin: 5px 0; border-left: 3px solid #fff; border-radius: 3px; font-size: 12px; background: rgba(255, 255, 255, 0.05); }
+        .player-card.self { border-left-color: #00ff00; font-weight: bold; }
+        .player-card.dead { opacity: 0.5; text-decoration: line-through; }
+        
+        /* チャット */
+        .chat-container { width: 250px; height: 200px; background: rgba(0, 0, 0, 0.9); border: 2px solid #ff00ff; border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; }
+        #chat-log { flex: 1; overflow-y: auto; padding: 10px; font-size: 11px; }
+        .chat-message { margin: 3px 0; padding: 3px; border-radius: 2px; word-wrap: break-word; }
+        #chat-input { padding: 5px; background: #333; color: white; border: 1px solid #555; font-size: 12px; width: 100%; }
+        
+        /* スマホ操作ボタン */
+        .mobile-controls { display: none; margin: 10px 0; }
+        .control-container { display: flex; justify-content: center; align-items: center; gap: 30px; }
+        .dpad { display: grid; grid-template-columns: 50px 50px 50px; grid-template-rows: 50px 50px 50px; gap: 3px; }
+        .action-buttons { display: flex; flex-direction: column; gap: 8px; }
+        .control-btn { width: 50px; height: 50px; font-size: 20px; background: rgba(68, 68, 68, 0.8); border: 2px solid #888; border-radius: 10px; color: white; cursor: pointer; user-select: none; touch-action: manipulation; }
+        .control-btn:active { background: rgba(100, 100, 100, 0.9); transform: scale(0.95); }
+        .control-btn.action { width: 85px; height: 85px; font-size: 16px; background: rgba(0, 150, 255, 0.8); font-weight: bold; }
+        .control-btn.action:active { background: rgba(0, 180, 255, 0.9); }
+        .control-btn.skill { width: 85px; height: 50px; font-size: 14px; background: rgba(255, 200, 0, 0.8); font-weight: bold; }
+        .control-btn.skill:active { background: rgba(255, 220, 50, 0.9); }
+        
+        @media (max-width: 768px), (pointer: coarse) {
+            body { padding: 5px; }
+            #title { font-size: 18px; margin: 5px 0; padding: 10px; }
+            .mobile-controls { display: block; }
+            canvas { width: min(95vw, 400px) !important; height: min(95vw, 400px) !important; }
+            .ui-container { width: min(95vw, 400px); padding: 10px; margin-top: 5px; font-size: 14px; }
+            #minimap { display: none; }
+            button { padding: 6px 12px; font-size: 14px; margin: 3px; }
+            .wiki-link { margin: 5px 0; }
+            .wiki-link a { padding: 8px 15px; font-size: 13px; }
+            #game-container { flex-direction: column; }
+            .multiplayer-panel, .chat-container { width: 90vw; max-width: 420px; }
+        }
+    </style>
+</head>
+<body>
+
+    <h2 id="title" class="ui-container">ひじきサバイバー - マルチプレイ版
+        <div id="setup">
+            ルームID (オプション): <input type="text" id="room-id-input" placeholder="デフォルト">
+            プレイヤー名: <input type="text" id="player-name-input" placeholder="プレイヤー名">
+            <br><br>
+            必殺技選択<br>
+            <button onclick="startGame('ひじき豆')">1. ひじき豆</button>
+            <button onclick="startGame('縛り豆')">2. 縛り豆(クリア時スコア1.5倍)</button>
+            <button onclick="startGame('波動砲豆')">3. 波動砲豆</button>
+            <button onclick="startGame('ムービング豆')">4. ムービング豆</button>
+            <button onclick="startGame('侍豆')">5. 侍豆</button>
+            <button onclick="startGame('スピードブースター豆')">6. スピードブースター豆</button>
+        </div>
+    </h2>
+
+    <div id="game-container">
+        <div id="game-view" class="hidden">
+            <div id="game-inner">
+                <canvas id="gameCanvas" width="144" height="144"></canvas>
+                <canvas id="minimap" width="100" height="100"></canvas>
+                
+                <div id="pause-overlay" class="overlay hidden"><h2>PAUSE</h2><button onclick="togglePause()">再開</button></div>
+                
+                <div id="result-overlay" class="overlay hidden">
+                    <h2 style="color:#ff4444;">GAME OVER</h2>
+                    <p style="font-size: 32px; font-weight: bold; color: #ffff00; margin: 10px 0;">RANK: <span id="res-rank">-</span></p>
+                    <p style="color: #fff; font-size: 16px;">ABILITY: <span id="res-ability">0</span></p>
+                    <p>SCORE: <span id="res-score">0</span></p>
+                    <p>WAVE: <span id="res-wave">1</span></p>
+                    <button onclick="location.reload()">もう一度</button>
+                </div>
+
+                <div id="shop-overlay" class="overlay hidden">
+                    <h3 style="color: #ffff00;">SHOP</h3>
+                    <button id="btn-speed" onclick="buyUpgrade('speed')">速度UP ($50) 残り:<span id="stock-speed">20</span></button>
+                    <button id="btn-range" onclick="buyUpgrade('range')">範囲UP ($100) 残り:<span id="stock-range">10</span></button>
+                    <button id="btn-heal" onclick="buyUpgrade('heal')">HP全回復 ($60)残り:<span id="stock-heal">5</span></button>
+                    <button id="btn-heal25" onclick="buyUpgrade('heal25')">HP25回復 ($15)残り:<span id="stock-heal25">20</span></button><br><br>
+                    <button onclick="toggleShop()">閉じる</button>
+                </div>
+            </div>
+
+            <div class="ui-container">
+                <div style="display: flex; justify-content: space-between; font-weight: bold;">
+                    <div style="color: #00ff00;">HP: <span id="hp-display">100</span></div>
+                    <div style="color: #fff;">SCORE: <span id="score-display">0</span> [<span id="rank-display" style="color: #ffff00;">E</span>]</div>
+                    <div style="color: #ffff00;">$: <span id="money-display">0</span></div>
+                </div>
+                <div class="hp-bar-bg"><div id="hp-bar-fill"></div></div>
+                <div class="skill-bar-bg"><div id="skill-bar-fill"></div></div>
+                <div style="font-size: 10px; color: #00ccff; margin-top: 2px;">SPACE: 必殺ひじき / クリック: 攻撃</div>
+                <div id="wave-info" style="color: #00ff00; margin-top:8px;">WAVE <span id="wave-num">1</span> | 敵: <span id="enemy-count">0</span> | キル: <span id="kill-count">0</span>/<span id="kill-target">5</span></div>
+                <div id="rest-ui" class="hidden">次まで: <span id="shop-timer">30</span>s <button onclick="toggleShop()" style="background:#ccaa00;color:black;">SHOP</button></div>
+            </div>
+        </div>
+
+        <!-- マルチプレイパネル -->
+        <div id="multiplayer-panel" class="multiplayer-panel hidden">
+            <h3 style="text-align: center; color: #00ccff; margin-bottom: 10px;">👥 プレイヤー</h3>
+            <div id="players-list"></div>
+            <hr style="margin: 10px 0; border-color: #444;">
+            <label style="font-size: 12px;">
+                <input type="checkbox" id="friendly-fire-toggle" onchange="toggleFriendlyFire()"> 
+                フレンドリーファイア
+            </label>
+        </div>
+
+        <!-- チャットパネル -->
+        <div id="chat-container" class="chat-container hidden">
+            <div id="chat-log"></div>
+            <input type="text" id="chat-input" placeholder="メッセージ..." onkeypress="handleChatKeyPress(event)">
+        </div>
+    </div>
+
+    <!-- スマホ用操作ボタン -->
+    <div class="mobile-controls">
+        <div class="control-container">
+            <div class="dpad">
+                <div></div>
+                <button class="control-btn" id="btn-up">↑</button>
+                <div></div>
+                <button class="control-btn" id="btn-left">←</button>
+                <div></div>
+                <button class="control-btn" id="btn-right">→</button>
+                <div></div>
+                <button class="control-btn" id="btn-down">↓</button>
+                <div></div>
+            </div>
+            
+            <div class="action-buttons">
+                <button class="control-btn action" id="btn-attack">攻撃</button>
+                <button class="control-btn skill" id="btn-skill">必殺技</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="wiki-link">
+        <a href="/UchuAddonWiki/">📚 Wiki を見る</a>
+    </div>
+
+<script>
+const TILE_SIZE = 16, CENTER = 4, MAP_LIMIT = 64;
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const mCanvas = document.getElementById('minimap');
+const mCtx = mCanvas.getContext('2d');
+
+let spriteSheet = new Image();
+spriteSheet.src = '../resource/minigame/Hjksurvivor.png';
+let useShapeFallback = false;
+spriteSheet.onerror = () => { useShapeFallback = true; };
+
+// マルチプレイ変数
+let playerId = null, playerColor = null, roomId = null, ws = null;
+let otherPlayers = {};
+let friendlyFireEnabled = false;
+
+function drawPlayerShape(ctx, x, y, size) {
+    ctx.fillStyle = "#00ff00";
+    ctx.beginPath();
+    ctx.arc(x + size/2, y + size/2, size/2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#000";
+    ctx.fillRect(x + size*0.3, y + size*0.3, size*0.15, size*0.15);
+    ctx.fillRect(x + size*0.55, y + size*0.3, size*0.15, size*0.15);
+}
+
+function drawPlayerShapeColored(ctx, x, y, size, color) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x + size/2, y + size/2, size/2, 0, Math.PI * 2);
+    ctx.fill();
+}
+
+function drawEnemyShape(ctx, x, y, size, type) {
+    const colors = {
+        'normal': '#4444ff',
+        'speed': '#44ff44',
+        'heavy': '#9370DB',
+        'scout': '#88ccff'
+    };
+    ctx.fillStyle = colors[type] || '#ff4444';
+    ctx.beginPath();
+    ctx.arc(x + size/2, y + size/2, size/2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#ff0000";
+    ctx.fillRect(x + size*0.3, y + size*0.3, size*0.2, size*0.2);
+    ctx.fillRect(x + size*0.5, y + size*0.3, size*0.2, size*0.2);
+}
+
+let player = { worldX: 0, worldY: 0, hp: 100, maxHp: 100, money: 0, score: 0, moveSpeed: 0.08, weaponRange: 1.2, angle: 0, isAttacking: false, attackFrame: 0, skillCool: 0, invincibleTimer: 0, isInvincible: false};
+let enemies = [], drops = [];
+let gameState = 'playing', currentWave = 1, killsInTurn = 0, targetKills = 5, shopTimeLeft = 0, keys = {};
+let skillEffect = 0;
+let restTimer = null; 
+let scoreMultiplier = 1;
+let beamActive = 0;
+let mouseWorldX = 0, mouseWorldY = 0;
+let fixedAngle = 0;
+let targetAngle = 0;
+
+canvas.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * (canvas.width / rect.width) - 72;
+    const my = (e.clientY - rect.top) * (canvas.height / rect.height) - 72;
+    targetAngle = Math.atan2(my, mx);
+    mouseWorldX = player.worldX + (mx / 16);
+    mouseWorldY = player.worldY + (my / 16);
+});
+
+let lastRank = "E";
+let maxEnemies = 20;
+let spawnRateup = 0;
+
+let shopStock = { speed: 20, range: 10, heal: 5, heal25: 20 };
+let overlayEffect = { text: "", timer: 0, opacity: 0, scale: 1.0 };
+
+const SPRITE_POS = { hijiki: 64, normal: 32, speed: -0.1, heavy: 48, scout: 16 };
+
+// ===== WebSocket初期化 =====
+function initWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(protocol + '//' + window.location.host);
+    ws.onopen = () => console.log('🔗 サーバーに接続しました');
+    ws.onmessage = (e) => handleServerMessage(JSON.parse(e.data));
+    ws.onclose = () => console.log('❌ 切断されました');
+}
+
+function handleServerMessage(data) {
+    switch(data.type) {
+        case 'self_info':
+            playerId = data.playerId;
+            playerColor = data.color;
+            roomId = data.roomId;
+            friendlyFireEnabled = data.friendlyFireEnabled;
+            break;
+        case 'existing_player':
+            otherPlayers[data.playerId] = {
+                id: data.playerId,
+                nickname: data.nickname,
+                color: data.color,
+                worldX: data.worldX,
+                worldY: data.worldY,
+                hp: data.hp,
+                score: data.score,
+                isAlive: data.isAlive
+            };
+            addChatMessage('システム', `${data.nickname}がゲーム中です`, '#888');
+            break;
+        case 'player_joined':
+            otherPlayers[data.playerId] = {
+                id: data.playerId,
+                nickname: data.nickname,
+                color: data.color,
+                worldX: 0,
+                worldY: 0,
+                hp: 100,
+                score: 0,
+                isAlive: true
+            };
+            addChatMessage('システム', `${data.nickname}が参加しました`, '#00ff00');
+            break;
+        case 'player_left':
+            if (otherPlayers[data.playerId]) {
+                delete otherPlayers[data.playerId];
+            }
+            break;
+        case 'player_update':
+            if (otherPlayers[data.playerId]) {
+                otherPlayers[data.playerId].worldX = data.worldX;
+                otherPlayers[data.playerId].worldY = data.worldY;
+                otherPlayers[data.playerId].hp = data.hp;
+                otherPlayers[data.playerId].score = data.score;
+            }
+            break;
+        case 'game_state':
+            enemies = data.enemies;
+            document.getElementById('enemy-count').innerText = data.enemyCount;
+            document.getElementById('kill-count').innerText = data.killCount;
+            document.getElementById('kill-target').innerText = data.targetKills;
+            break;
+        case 'enemy_killed':
+            addChatMessage('キル', `${data.playerName}が敵を倒した (+${data.scoreGain})`, '#ffff00');
+            break;
+        case 'wave_clear':
+            gameState = 'resting';
+            currentWave = data.nextWave;
+            addChatMessage('ウェーブ', `Wave ${data.nextWave}へ`, '#00ff00');
+            startRestPhase();
+            break;
+        case 'wave_start':
+            gameState = 'playing';
+            currentWave = data.wave;
+            break;
+        case 'game_start':
+            gameState = 'playing';
+            document.getElementById('setup').classList.add('hidden');
+            document.getElementById('game-view').classList.remove('hidden');
+            document.getElementById('multiplayer-panel').classList.remove('hidden');
+            document.getElementById('chat-container').classList.remove('hidden');
+            requestAnimationFrame(loop);
+            break;
+        case 'game_over':
+            gameState = 'over';
+            document.getElementById('res-rank').innerText = getRank(player.score);
+            document.getElementById('res-score').innerText = player.score;
+            document.getElementById('res-wave').innerText = currentWave;
+            document.getElementById('result-overlay').classList.remove('hidden');
+            break;
+        case 'chat':
+            addChatMessage(data.nickname, data.message, data.color);
+            break;
+    }
+}
+
+function startGame(choice) {
+    const roomIdInput = document.getElementById('room-id-input').value.trim();
+    const playerNameInput = document.getElementById('player-name-input').value.trim();
+    if (!playerNameInput) { alert('プレイヤー名を入力してください'); return; }
+    player.abilityType = choice;
+    initWebSocket();
+    setTimeout(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: 'join_game',
+                roomId: roomIdInput || 'room_default',
+                nickname: playerNameInput,
+                abilityType: choice
+            }));
+        }
+    }, 500);
+}
+
+function getRank(s) {
+    if (s < 200000) {
+        if (s >= 100000) return "XXX+";
+        if (s >= 90000)  return "XXX";
+        if (s >= 80000)  return "XX";
+        if (s >= 70000)  return "X";
+        if (s >= 60000)  return "SSS+";
+        if (s >= 40000)  return "SSS";
+        if (s >= 30000)  return "SS";
+        if (s >= 22500)  return "S";
+        if (s >= 15000)  return "A";
+        if (s >= 7500)   return "B";
+        if (s >= 4500)   return "C";
+        if (s >= 1250)   return "D";
+        return "E";
+    }
+    const n = Math.floor(Math.log2(s / 200000)) + 1;
+    if (n <= 1) return "U";
+    return "U" + n;
+}
+
+function addChatMessage(nickname, message, color) {
+    const chatLog = document.getElementById('chat-log');
+    const messageEl = document.createElement('div');
+    messageEl.className = 'chat-message';
+    messageEl.style.color = color || '#fff';
+    messageEl.innerText = `[${nickname}] ${message}`;
+    chatLog.appendChild(messageEl);
+    chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function handleChatKeyPress(event) {
+    if (event.key === 'Enter') {
+        const input = document.getElementById('chat-input');
+        const message = input.value.trim();
+        if (message && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'chat', message: message }));
+            input.value = '';
+        }
+    }
+}
+
+function toggleFriendlyFire() {
+    const enabled = document.getElementById('friendly-fire-toggle').checked;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'toggle_friendly_fire', enabled: enabled }));
+    }
+}
+
+function updateUI() {
+    const currentRank = getRank(player.score);
+    if (currentRank !== lastRank && gameState !== 'over') {
+        overlayEffect = { text: "RANK UP!", timer: 60, opacity: 1.0, scale: 1.0 };
+        lastRank = currentRank;
+    }
+    const hpPer = (player.hp / player.maxHp) * 100;
+    document.getElementById('hp-bar-fill').style.width = Math.max(0, hpPer) + "%";
+    document.getElementById('skill-bar-fill').style.width = (player.skillCool / 10) + "%";
+    document.getElementById('hp-display').innerText = Math.ceil(player.hp);
+    document.getElementById('score-display').innerText = player.score;
+    document.getElementById('rank-display').innerText = currentRank;
+    document.getElementById('money-display').innerText = player.money;
+    document.getElementById('wave-num').innerText = currentWave;
+    updateShopUI();
+    updatePlayersListUI();
+}
+
+function updatePlayersListUI() {
+    const playersList = document.getElementById('players-list');
+    playersList.innerHTML = '';
+    const selfCard = document.createElement('div');
+    selfCard.className = 'player-card self';
+    selfCard.innerHTML = `<div style="color: ${playerColor};">あなた</div><div style="font-size: 11px;">HP: ${Math.ceil(player.hp)}/100 | ${player.score}</div>`;
+    playersList.appendChild(selfCard);
+    Object.values(otherPlayers).forEach(p => {
+        const card = document.createElement('div');
+        card.className = 'player-card' + (p.isAlive ? '' : ' dead');
+        card.innerHTML = `<div style="color: ${p.color};">${p.nickname}</div><div style="font-size: 11px;">HP: ${Math.ceil(p.hp)}/100 | ${p.score}</div>`;
+        playersList.appendChild(card);
+    });
+}
+
+function updateShopUI() {
+    document.getElementById('stock-speed').innerText = shopStock.speed;
+    document.getElementById('stock-range').innerText = shopStock.range;
+    document.getElementById('stock-heal').innerText = shopStock.heal;
+    document.getElementById('stock-heal25').innerText = shopStock.heal25;
+}
+
+function startRestPhase() {
+    if (gameState === 'resting') return;
+    gameState = 'resting';
+    if (restTimer) clearInterval(restTimer);
+    shopTimeLeft = 30;
+    player.score += Math.floor((currentWave * 500) * scoreMultiplier);
+    overlayEffect = { text: "WAVE CLEAR!", timer: 60, opacity: 1.0, scale: 0.5 };
+    document.getElementById('rest-ui').classList.remove('hidden');
+    restTimer = setInterval(() => {
+        if (gameState === 'over') { clearInterval(restTimer); return; }
+        if (gameState !== 'paused') shopTimeLeft--;
+        document.getElementById('shop-timer').innerText = shopTimeLeft;
+        if (shopTimeLeft <= 0) { clearInterval(restTimer); restTimer = null; nextWave(); }
+    }, 1000);
+}
+
+function nextWave() {
+    if (gameState === 'over') return;
+    gameState = 'playing';
+    currentWave++; killsInTurn = 0; targetKills += 2;
+    overlayEffect = { text: "WAVE " + currentWave + " START!", timer: 60, opacity: 1.0, scale: 0.5 };
+    document.getElementById('rest-ui').classList.add('hidden');
+    document.getElementById('shop-overlay').classList.add('hidden');
+    maxEnemies += 2;
+    spawnRateup += 0.0025;
+}
+
+function useSkill() {
+    if(player.abilityType == 'ひじき豆' ||player.abilityType == '縛り豆' || player.skillCool < 1000 || gameState !== 'playing' && gameState !== 'resting') return;
+    player.score += 250;
+    player.skillCool = 0;
+    if (player.abilityType === '波動砲豆') {
+        beamActive = 120;
+        fixedAngle = player.angle;
+    }
+    else if (player.abilityType === 'ムービング豆') {
+        player.worldX = mouseWorldX;
+        player.worldY = mouseWorldY;
+        overlayEffect = { text: "テレポート！", timer: 30, opacity: 1.0, scale: 0.5 };
+    } 
+    else if (player.abilityType === '侍豆') {
+        skillEffect = 20;
+        enemies.forEach((en, i) => {
+            let dx = player.worldX - en.worldX, dy = player.worldY - en.worldY;
+            let dist = Math.sqrt(dx*dx + dy*dy);
+            if(dist < 7.5) {
+                player.score += Math.floor(en.scoreVal * scoreMultiplier);
+                enemies.splice(i, 1);
+                killsInTurn++;
+                drops.push({x: en.worldX, y: en.worldY, type: 'coin'});
+            }
+        });
+    }
+    else if (player.abilityType === 'スピードブースター豆') {
+        let speedboost=(player.moveSpeed * 2) - player.moveSpeed;
+        player.moveSpeed *= 2;
+        setTimeout(() => player.moveSpeed -= speedboost, 5000);
+    }
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'use_skill' }));
+    }
+    updateUI();
+}
+
+let prevState = gameState;
+function togglePause(){
+    if (gameState === 'over') return;
+    if (gameState !== 'paused') {
+        prevState = gameState;
+        gameState = 'paused';
+        document.getElementById('pause-overlay').classList.remove('hidden');
+    } else {
+        gameState = prevState;
+        document.getElementById('pause-overlay').classList.add('hidden');
+    }
+}
+
+function toggleShop() {
+    if (player.abilityType === '縛り豆') {
+        overlayEffect = { text: "🙄縛り豆でーすwwwww👈", timer: 60, opacity: 1.0, scale: 0.5 };
+        return;
+    }
+    const shop = document.getElementById('shop-overlay');
+    const isShopOpen = !shop.classList.contains('hidden');
+    if (gameState === 'resting' || isShopOpen) {
+        shop.classList.toggle('hidden');
+    }
+    if (isShopOpen) {
+        gameState = 'resting';
+    }
+}
+
+function buyUpgrade(type) {
+    if (shopStock[type] <= 0)  return;
+    if (type === 'speed' && player.money >= 50) { player.moveSpeed += 0.005; player.money -= 50; shopStock.speed--; player.score += 50;}
+    else if (type === 'range' && player.money >= 100) { player.weaponRange += 0.1; player.money -= 100; shopStock.range--; player.score += 50;}
+    else if (type === 'heal' && player.money >= 60) { player.hp = player.maxHp; player.money -= 60; shopStock.heal--; player.score += 50;}
+    else if (type === 'heal25' && player.money >= 15) { player.hp += 25; player.money -= 15; shopStock.heal25--; player.score += 50;}
+    updateUI();
+}
+
+function update() {
+    if (!gameState || gameState === 'setup' || gameState === 'paused' || gameState === 'over') return;
+
+    if (skillEffect > 0) skillEffect--;
+    if (beamActive > 0) {
+        beamActive--;
+        player.angle = fixedAngle;
+        checkBeamCollision();
+    }
+    if (player.invincibleTimer > 0) {
+        player.invincibleTimer--;
+        if (player.invincibleTimer <= 0) player.isInvincible = false;
+    }
+
+    if (beamActive <= 0) {
+        let dx = 0, dy = 0;
+        if (keys['w'] || keys['arrowup']) dy -= player.moveSpeed;
+        if (keys['s'] || keys['arrowdown']) dy += player.moveSpeed;
+        if (keys['a'] || keys['arrowleft']) dx -= player.moveSpeed;
+        if (keys['d'] || keys['arrowright']) dx += player.moveSpeed;
+        if (dx !== 0 && dy !== 0) { dx *= 0.707; dy *= 0.707; }
+        let nextX = player.worldX + dx;
+        let nextY = player.worldY + dy;
+        if (nextX <= MAP_LIMIT && nextX >= -MAP_LIMIT) player.worldX = nextX;
+        if (nextY <= MAP_LIMIT && nextY >= -MAP_LIMIT) player.worldY = nextY;
+        player.angle = targetAngle;
+    }
+
+    let spawnRate = (gameState === 'playing') ? 0.03 : 0.005;
+    if(enemies.length >= 20) spawnRate = spawnRateup;
+    
+    if (Math.random() < spawnRate && enemies.length < maxEnemies) {
+        const types = [
+            { type: 'normal', color: 'blue', hp: 2, speed: 0.03, power: 3, scoreVal: 100 },
+            { type: 'speed', color: 'green', hp: 0.5, speed: 0.13, power: 3, scoreVal: 150 },
+            { type: 'heavy', color: '#9370DB', hp: 4, speed: 0.01, power: 8, scoreVal: 500 },
+            { type: 'scout', color: 'lightblue', hp: 2, speed: 0.03, power: 5, scoreVal: 250 }
+        ];
+        let t = types[Math.floor(Math.random() * Math.min(currentWave, 4))];
+        let ang = Math.random() * Math.PI * 2;
+        let newEnemy = { worldX: player.worldX + Math.cos(ang)*7, worldY: player.worldY + Math.sin(ang)*7, ...t };
+        newEnemy.worldX = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, newEnemy.worldX));
+        newEnemy.worldY = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, newEnemy.worldY));
+        enemies.push(newEnemy);
+    }
+
+    enemies.forEach((en, i) => {
+        let edx = player.worldX - en.worldX, edy = player.worldY - en.worldY;
+        let dist = Math.sqrt(edx*edx + edy*edy);
+        en.worldX += edx * (en.speed / dist);
+        en.worldY += edy * (en.speed / dist);
+        en.worldX = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, en.worldX));
+        en.worldY = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, en.worldY));
+
+        if (dist < 0.5) {
+            if (!player.isInvincible) {
+                player.hp -= en.power;
+                updateUI();
+                player.invincibleTimer = 5;
+                player.isInvincible = true;
+            }
+            if (player.hp <= 0) gameOver();
+        }
+
+        if (player.isAttacking && dist < player.weaponRange) {
+            let angleToEn = Math.atan2(en.worldY - player.worldY, en.worldX - player.worldX);
+            let aDiff = Math.abs(player.angle - angleToEn);
+            if (aDiff > Math.PI) aDiff = Math.PI * 2 - aDiff;
+            if (aDiff < 1.0) {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: 'attack_enemy',
+                        enemyId: 'local_' + i,
+                        damage: 0.5
+                    }));
+                }
+                en.hp -= 0.5;
+                if(en.hp <= 0) enemyKilled(en, i);
+            }
+        }
+    });
+
+    drops.forEach((d, i) => {
+        if (Math.sqrt((player.worldX-d.x)**2 + (player.worldY-d.y)**2) < 0.7) {
+            if (d.type === 'heal') player.hp = Math.min(player.maxHp, player.hp + 5);
+            else player.money += 10;
+            drops.splice(i, 1);
+            updateUI();
+        }
+    });
+
+    if (player.isAttacking) {
+        player.attackFrame -= 0.75;
+        if (player.attackFrame <= 0) {
+            player.isAttacking = false;
+            player.attackFrame = 0;
+        }
+        updateUI();
+    }
+
+    if (ws && ws.readyState === WebSocket.OPEN && Math.random() < 0.1) {
+        ws.send(JSON.stringify({
+            type: 'player_update',
+            worldX: player.worldX,
+            worldY: player.worldY,
+            hp: player.hp,
+            score: player.score,
+            money: player.money,
+            angle: player.angle,
+            skillCool: player.skillCool
+        }));
+    }
+
+    updateShopUI();
+}
+
+function checkBeamCollision() {
+    enemies.forEach((en, i) => {
+        let dx = en.worldX - player.worldX;
+        let dy = en.worldY - player.worldY;
+        let dist = Math.sqrt(dx * dx + dy * dy);
+        let angleToEn = Math.atan2(dy, dx);
+        let angleDiff = Math.abs(player.angle - angleToEn);
+        if (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
+        if (dist < 50 && angleDiff < 0.50) {
+            en.hp -= 0.2;
+            if (en.hp <= 0) enemyKilled(en, i);
+        }
+    });
+}
+
+function enemyKilled(en, i) {
+    player.score += Math.floor((en.scoreVal || 100) * scoreMultiplier);
+    player.skillCool = Math.min(1000, player.skillCool + 100);
+    let r = Math.random();
+    if(r < 0.8) drops.push({x: en.worldX, y: en.worldY, type: 'coin'});
+    else if(r < 0.85) drops.push({x: en.worldX, y: en.worldY, type: 'heal'});
+    enemies.splice(i, 1);
+    if (gameState === 'playing') {
+        killsInTurn++;
+        if (killsInTurn >= targetKills) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'wave_clear_request' }));
+            }
+            startRestPhase();
+        }
+    }
+}
+
+function gameOver() {
+    if (player.money > 0) {
+        player.score += player.money;
+        player.money = 0;
+    }
+    if (player.abilityType === '縛り豆') {
+        player.score = Math.floor(player.score * 1.5);
+        updateUI();
+    }
+    gameState = 'over';
+    document.getElementById('res-ability').innerText = player.abilityType;
+    document.getElementById('res-rank').innerText = getRank(player.score);
+    document.getElementById('res-score').innerText = player.score;
+    document.getElementById('res-wave').innerText = currentWave;
+    document.getElementById('result-overlay').classList.remove('hidden');
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'game_over' }));
+    }
+}
+
+function draw() {
+    ctx.clearRect(0, 0, 144, 144);
+    mCtx.clearRect(0, 0, 100, 100);
+
+    let offX = (player.worldX % 1) * 16, offY = (player.worldY % 1) * 16;
+
+    for (let iy = -1; iy <= 10; iy++) {
+        for (let ix = -1; ix <= 10; ix++) {
+            let worldTileX = Math.floor(player.worldX) + ix - 4;
+            let worldTileY = Math.floor(player.worldY) + iy - 4;
+            ctx.fillStyle = (Math.abs(worldTileX) > MAP_LIMIT || Math.abs(worldTileY) > MAP_LIMIT) ? "#222" : 
+                            ((Math.abs(worldTileX) + Math.abs(worldTileY)) % 2 === 0 ? "#555" : "#4a4a4a");
+            ctx.fillRect(ix * 16 - offX, iy * 16 - offY, 16, 16);
+        }
+    }
+
+    if (player.isInvincible && Math.floor(Date.now() / 50) % 2 === 0) {
+    } else {
+        if (useShapeFallback) {
+            drawPlayerShape(ctx, 64, 64, 16);
+        } else {
+            ctx.drawImage(spriteSheet, SPRITE_POS.hijiki, 0, 16, 16, 64, 64, 16, 16);
+        }
+    }
+
+    if (beamActive > 0) {
+        ctx.save();
+        ctx.translate(72, 72);
+        ctx.rotate(player.angle);
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = "#00ffff";
+        let grad = ctx.createLinearGradient(0, 0, 160, 0);
+        grad.addColorStop(0, "rgba(0, 255, 255, 0.8)");
+        grad.addColorStop(1, "rgba(0, 100, 255, 0)");
+        ctx.fillStyle = grad;
+        let beamSize = 6 + Math.random() * 4;
+        ctx.fillRect(8, -beamSize / 2, 160, beamSize);
+        ctx.fillStyle = "white";
+        ctx.fillRect(8, -1.5, 160, 3);
+        for(let i=0; i<3; i++) {
+            ctx.fillStyle = "white";
+            ctx.fillRect(10 + Math.random()*10, (Math.random()-0.5)*15, 2, 2);
+        }
+        ctx.restore();
+    }
+
+    if(skillEffect > 0) {
+        ctx.strokeStyle = "rgba(0, 200, 255, " + (skillEffect/20) + ")";
+        ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(72, 72, 48 * (1 - skillEffect/20), 0, Math.PI*2); ctx.stroke();
+    }
+
+    drops.forEach(d => {
+        let dx = (CENTER + (d.x - player.worldX)) * 16, dy = (CENTER + (d.y - player.worldY)) * 16;
+        ctx.fillStyle = d.type === 'heal' ? "#00ff00" : "#ffff00";
+        ctx.beginPath(); ctx.arc(dx+8, dy+8, 3, 0, Math.PI*2); ctx.fill();
+    });
+
+    enemies.forEach(en => {
+        let dx = (CENTER + (en.worldX - player.worldX)) * 16, dy = (CENTER + (en.worldY - player.worldY)) * 16;
+        let s = en.type === 'heavy' ? 18 : 14;
+        if (useShapeFallback) {
+            drawEnemyShape(ctx, dx + (16-s)/2, dy + (16-s)/2, s, en.type);
+        } else {
+            let sx = SPRITE_POS[en.type] || 32; 
+            ctx.drawImage(spriteSheet, sx, 0, 16, 16, dx + (16-s)/2, dy + (16-s)/2, s, s);
+        }
+        mCtx.fillStyle = en.color; mCtx.fillRect(50 + en.worldX*0.78, 50 + en.worldY*0.78, 2, 2);
+    });
+
+    // 他プレイヤーの描画
+    Object.values(otherPlayers).forEach(p => {
+        if (p.isAlive) {
+            let dx = (CENTER + (p.worldX - player.worldX)) * 16, dy = (CENTER + (p.worldY - player.worldY)) * 16;
+            drawPlayerShapeColored(ctx, dx, dy, 16, p.color);
+            mCtx.fillStyle = p.color;
+            mCtx.fillRect(50 + p.worldX*0.78, 50 + p.worldY*0.78, 2, 2);
+        }
+    });
+
+    if (useShapeFallback) {
+        drawPlayerShape(ctx, 64, 64, 16);
+    } else {
+        ctx.drawImage(spriteSheet, SPRITE_POS.hijiki, 0, 16, 16, 64, 64, 16, 16);
+    }
+    mCtx.fillStyle = "#00ff00"; mCtx.fillRect(50 + player.worldX*0.78, 50 + player.worldY*0.78, 3, 3);
+
+    ctx.save();
+    ctx.translate(72, 72);
+    let t = (8 - player.attackFrame) / 4;
+    let sweep = t * Math.PI;
+    let attackRotation = player.isAttacking ? Math.sin(sweep) * 0.9 : 0;
+    ctx.rotate(player.angle + attackRotation);
+    ctx.fillStyle = "#eee";
+    ctx.fillRect(10, -1.5, 12 * (player.weaponRange/1.2), 3);
+    ctx.restore();
+
+    if (overlayEffect.timer > 0) {
+        ctx.save();
+        ctx.translate(72, 72);
+        ctx.scale(overlayEffect.scale, overlayEffect.scale);
+        ctx.font = "bold 8px monospace"; ctx.textAlign = "center";
+        ctx.strokeStyle = `rgba(0, 0, 0, ${overlayEffect.opacity})`; ctx.lineWidth = 3;
+        ctx.strokeText(overlayEffect.text, 0, 0);
+        ctx.fillStyle = `rgba(255, 255, 255, ${overlayEffect.opacity})`;
+        ctx.fillText(overlayEffect.text, 0, 0);
+        ctx.restore();
+        overlayEffect.timer--;
+        overlayEffect.scale += (1.5 - overlayEffect.scale) * 0.1;
+        if (overlayEffect.timer < 20) overlayEffect.opacity -= 0.05;
+    }
+}
+
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+
+window.addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+    if(e.code==='Space') useSkill();
+    if(e.key==='p') togglePause();
+    if(e.key==='x') toggleShop();
+});
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+const mobileButtons = { 'btn-up': 'w', 'btn-down': 's', 'btn-left': 'a', 'btn-right': 'd' };
+Object.entries(mobileButtons).forEach(([btnId, key]) => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+        btn.addEventListener('touchstart', (e) => { e.preventDefault(); keys[key] = true; }, { passive: false });
+        btn.addEventListener('touchend', (e) => { e.preventDefault(); keys[key] = false; }, { passive: false });
+        btn.addEventListener('touchcancel', (e) => { e.preventDefault(); keys[key] = false; }, { passive: false });
+        btn.addEventListener('mousedown', (e) => { e.preventDefault(); keys[key] = true; });
+        btn.addEventListener('mouseup', (e) => { e.preventDefault(); keys[key] = false; });
+        btn.addEventListener('mouseleave', (e) => { keys[key] = false; });
+    }
+});
+
+const attackBtn = document.getElementById('btn-attack');
+if (attackBtn) {
+    attackBtn.addEventListener('touchstart', (e) => { e.preventDefault(); if(gameState==='playing' || gameState==='resting'){ player.isAttacking=true; player.attackFrame=8; } }, { passive: false });
+    attackBtn.addEventListener('mousedown', (e) => { e.preventDefault(); if(gameState==='playing' || gameState==='resting'){ player.isAttacking=true; player.attackFrame=8; } });
+}
+
+const skillBtn = document.getElementById('btn-skill');
+if (skillBtn) {
+    skillBtn.addEventListener('touchstart', (e) => { e.preventDefault(); useSkill(); }, { passive: false });
+    skillBtn.addEventListener('mousedown', (e) => { e.preventDefault(); useSkill(); });
+}
+
+canvas.addEventListener('mousedown', () => {
+    if(gameState==='playing' || gameState==='resting'){ player.isAttacking=true; player.attackFrame=8; }
+});
+</script>
+<div style="text-align: center; margin-top: 10px; color: #888; font-size: 12px;">
+    作：ラムネ
+</div>
+</body>
+</html>
