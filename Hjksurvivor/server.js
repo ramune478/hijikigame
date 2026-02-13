@@ -583,34 +583,6 @@ function startGameLoop(roomId) {
             if (room.playerInvincibleTicks[k] > 0) room.playerInvincibleTicks[k]--;
         });
 
-            let closestPlayer = null;
-            let closestDist = Infinity;
-
-            Object.values(room.players).forEach(p => {
-                if (p.isAlive) {
-                    const dx = p.worldX - enemy.worldX;
-                    const dy = p.worldY - enemy.worldY;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
-                    
-                    if (dist < closestDist) {
-                        closestDist = dist;
-                        closestPlayer = p;
-                    }
-                }
-            });
-
-            if (closestPlayer && closestDist > 0.1) {
-                const dx = closestPlayer.worldX - enemy.worldX;
-                const dy = closestPlayer.worldY - enemy.worldY;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                enemy.worldX += (dx / dist) * enemy.speed;
-                enemy.worldY += (dy / dist) * enemy.speed;
-            }
-
-            enemy.worldX = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, enemy.worldX));
-            enemy.worldY = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, enemy.worldY));
-        });
-
         room.broadcastAll({
             type: 'game_state',
             enemies: room.enemies.map(e => ({
@@ -630,8 +602,8 @@ function startGameLoop(roomId) {
             killCount: room.killCount,
             targetKills: room.targetKills
         });
-    }, 50;);
-};
+    }, 50);
+}
 
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, '0.0.0.0', () => {
