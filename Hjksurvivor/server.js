@@ -7,6 +7,16 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
+// heartbeat: detect and terminate dead/ghost connections
+const HEARTBEAT_INTERVAL = 30000;
+setInterval(() => {
+    wss.clients.forEach((c) => {
+        if (c.isAlive === false) return c.terminate();
+        c.isAlive = false;
+        try { c.ping(); } catch (e) { /* ignore */ }
+    });
+}, HEARTBEAT_INTERVAL);
+
 app.use(express.static(path.join(__dirname)));
 
 let gameRooms = {};
@@ -32,6 +42,7 @@ class GameRoom {
         this.maxPlayers = 4;
         this.killCount = 0;
         this.targetKills = 5;
+        this.loopInterval = null; // game loop interval handle
     }
 
     addPlayer(playerId, playerData) {
@@ -53,7 +64,7 @@ class GameRoom {
         const msg = JSON.stringify(data);
         Object.values(this.players).forEach(p => {
             if (p.ws && p.ws.readyState === WebSocket.OPEN && p.id !== excludeId) {
-                p.ws.send(msg);
+                try { p.ws.send(msg); } catch (e) { /* ignore send errors */ }
             }
         });
     }
@@ -62,9 +73,16 @@ class GameRoom {
         const msg = JSON.stringify(data);
         Object.values(this.players).forEach(p => {
             if (p.ws && p.ws.readyState === WebSocket.OPEN) {
-                p.ws.send(msg);
+                try { p.ws.send(msg); } catch (e) { /* ignore send errors */ }
             }
         });
+    }
+
+    stopLoop() {
+        if (this.loopInterval) {
+            clearInterval(this.loopInterval);
+            this.loopInterval = null;
+        }
     }
 }
 
@@ -100,14 +118,19 @@ wss.on('connection', (ws) => {
     let roomId = null;
     let room = null;
 
+    // simple heartbeat for detecting dead clients
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
+
     ws.on('message', (message) => {
         try {
-            const data = JSON.parse(message);
+            const data = JSON.parse(message || '{}');
+            if (!data.type) return; // ignore malformed
 
             switch (data.type) {
                 case 'join_game':
-                    playerId = 'player_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-                    roomId = data.roomId || 'room_default';
+                    playerId = 'player_' + Date.now() + '_' + Math.random().toString(36).slice(2, 11);
+                    roomId = (typeof data.roomId === 'string' && data.roomId.trim()) ? data.roomId : 'room_default';
 
                     if (!gameRooms[roomId]) {
                         gameRooms[roomId] = new GameRoom(roomId);
@@ -119,7 +142,7 @@ wss.on('connection', (ws) => {
                     const playerData = {
                         id: playerId,
                         ws: ws,
-                        nickname: data.nickname,
+                        nickname: String(data.nickname || '名無し'),
                         color: PLAYER_COLORS[colorIndex],
                         worldX: 0,
                         worldY: 0,
@@ -127,7 +150,7 @@ wss.on('connection', (ws) => {
                         maxHp: 100,
                         score: 0,
                         money: 0,
-                        abilityType: data.abilityType,
+                        abilityType: data.abilityType || null,
                         moveSpeed: 0.08,
                         weaponRange: 1.2,
                         angle: 0,
@@ -137,24 +160,27 @@ wss.on('connection', (ws) => {
                     };
 
                     if (!room.addPlayer(playerId, playerData)) {
-                        ws.send(JSON.stringify({ type: 'error', message: 'ルームが満員です' }));
+                        try { ws.send(JSON.stringify({ type: 'error', message: 'ルームが満員です' })); } catch (e) {}
                         return;
                     }
 
+                    // send existing players to the new client
                     Object.values(room.players).forEach(p => {
                         if (p.id !== playerId) {
-                            ws.send(JSON.stringify({
-                                type: 'existing_player',
-                                playerId: p.id,
-                                nickname: p.nickname,
-                                color: p.color,
-                                worldX: p.worldX,
-                                worldY: p.worldY,
-                                hp: p.hp,
-                                score: p.score,
-                                abilityType: p.abilityType,
-                                isAlive: p.isAlive
-                            }));
+                            try {
+                                ws.send(JSON.stringify({
+                                    type: 'existing_player',
+                                    playerId: p.id,
+                                    nickname: p.nickname,
+                                    color: p.color,
+                                    worldX: p.worldX,
+                                    worldY: p.worldY,
+                                    hp: p.hp,
+                                    score: p.score,
+                                    abilityType: p.abilityType,
+                                    isAlive: p.isAlive
+                                }));
+                            } catch (e) {}
                         }
                     });
 
@@ -163,18 +189,20 @@ wss.on('connection', (ws) => {
                         playerId: playerId,
                         nickname: playerData.nickname,
                         color: playerData.color,
-                        abilityType: data.abilityType,
+                        abilityType: playerData.abilityType,
                         playerCount: room.getPlayerCount()
                     }, playerId);
 
-                    ws.send(JSON.stringify({
-                        type: 'self_info',
-                        playerId: playerId,
-                        color: playerData.color,
-                        roomId: roomId,
-                        playerCount: room.getPlayerCount(),
-                        friendlyFireEnabled: room.friendlyFireEnabled
-                    }));
+                    try {
+                        ws.send(JSON.stringify({
+                            type: 'self_info',
+                            playerId: playerId,
+                            color: playerData.color,
+                            roomId: roomId,
+                            playerCount: room.getPlayerCount(),
+                            friendlyFireEnabled: room.friendlyFireEnabled
+                        }));
+                    } catch (e) {}
 
                     if (room.getPlayerCount() >= 1 && room.gameState === 'waiting') {
                         room.gameState = 'playing';
@@ -190,13 +218,14 @@ wss.on('connection', (ws) => {
                 case 'player_update':
                     if (room && room.players[playerId]) {
                         const p = room.players[playerId];
-                        p.worldX = data.worldX;
-                        p.worldY = data.worldY;
-                        p.hp = data.hp;
-                        p.score = data.score;
-                        p.money = data.money;
-                        p.angle = data.angle;
-                        p.skillCool = data.skillCool;
+                        // sanitize numeric inputs
+                        p.worldX = Number(data.worldX) || p.worldX;
+                        p.worldY = Number(data.worldY) || p.worldY;
+                        p.hp = Number.isFinite(Number(data.hp)) ? Number(data.hp) : p.hp;
+                        p.score = Number.isFinite(Number(data.score)) ? Number(data.score) : p.score;
+                        p.money = Number.isFinite(Number(data.money)) ? Number(data.money) : p.money;
+                        p.angle = Number.isFinite(Number(data.angle)) ? Number(data.angle) : p.angle;
+                        p.skillCool = Number.isFinite(Number(data.skillCool)) ? Number(data.skillCool) : p.skillCool;
 
                         room.broadcast({
                             type: 'player_update',
@@ -208,7 +237,7 @@ wss.on('connection', (ws) => {
                             angle: p.angle
                         }, playerId);
 
-                        if (data.hp <= 0) {
+                        if (p.hp <= 0 && p.isAlive) {
                             p.isAlive = false;
                             room.broadcastAll({
                                 type: 'player_died',
@@ -243,6 +272,7 @@ wss.on('connection', (ws) => {
 
                                 if (room.gameState === 'playing' && room.killCount >= room.targetKills) {
                                     room.gameState = 'resting';
+                                    room.stopLoop();
                                     room.currentWave++;
                                     room.killCount = 0;
                                     room.targetKills += 2;
@@ -254,11 +284,13 @@ wss.on('connection', (ws) => {
 
                                     setTimeout(() => {
                                         if (gameRooms[roomId] && gameRooms[roomId].gameState === 'resting') {
-                                            gameRooms[roomId].gameState = 'playing';
-                                            gameRooms[roomId].broadcastAll({
+                                            const r = gameRooms[roomId];
+                                            r.gameState = 'playing';
+                                            r.broadcastAll({
                                                 type: 'wave_start',
-                                                wave: gameRooms[roomId].currentWave
+                                                wave: r.currentWave
                                             });
+                                            startGameLoop(roomId);
                                         }
                                     }, 30000);
                                 }
@@ -293,11 +325,11 @@ wss.on('connection', (ws) => {
 
                 case 'toggle_friendly_fire':
                     if (room) {
-                        room.friendlyFireEnabled = data.enabled;
+                        room.friendlyFireEnabled = !!data.enabled;
                         room.broadcastAll({
                             type: 'friendly_fire_toggled',
-                            enabled: data.enabled,
-                            changedBy: room.players[playerId].nickname
+                            enabled: room.friendlyFireEnabled,
+                            changedBy: room.players[playerId] ? room.players[playerId].nickname : 'unknown'
                         });
                     }
                     break;
@@ -318,6 +350,7 @@ wss.on('connection', (ws) => {
                 case 'wave_clear_request':
                     if (room && room.gameState === 'playing') {
                         room.gameState = 'resting';
+                        room.stopLoop();
                         room.currentWave++;
                         room.killCount = 0;
                         room.targetKills += 2;
@@ -330,11 +363,13 @@ wss.on('connection', (ws) => {
 
                         setTimeout(() => {
                             if (gameRooms[roomId] && gameRooms[roomId].gameState === 'resting') {
-                                gameRooms[roomId].gameState = 'playing';
-                                gameRooms[roomId].broadcastAll({
+                                const r = gameRooms[roomId];
+                                r.gameState = 'playing';
+                                r.broadcastAll({
                                     type: 'wave_start',
-                                    wave: gameRooms[roomId].currentWave
+                                    wave: r.currentWave
                                 });
+                                startGameLoop(roomId); // restart loop
                             }
                         }, 30000);
                     }
@@ -349,6 +384,7 @@ wss.on('connection', (ws) => {
         if (playerId && roomId && gameRooms[roomId]) {
             const r = gameRooms[roomId];
             if (r.removePlayer(playerId)) {
+                r.stopLoop();
                 delete gameRooms[roomId];
             } else {
                 r.broadcastAll({
@@ -363,10 +399,14 @@ wss.on('connection', (ws) => {
 function startGameLoop(roomId) {
     const room = gameRooms[roomId];
     if (!room) return;
+    if (room.loopInterval) return; // already running
 
-    const gameLoopInterval = setInterval(() => {
-        if (!gameRooms[roomId] || room.gameState !== 'playing') {
-            if (!gameRooms[roomId]) clearInterval(gameLoopInterval);
+    room.loopInterval = setInterval(() => {
+        const currentRoom = gameRooms[roomId];
+        if (!currentRoom || currentRoom.gameState !== 'playing' || currentRoom.getPlayerCount() === 0) {
+            // stop loop if room removed, not playing, or empty
+            if (currentRoom) currentRoom.stopLoop();
+            else clearInterval(room.loopInterval);
             return;
         }
 
@@ -375,7 +415,8 @@ function startGameLoop(roomId) {
         
         if (Math.random() < spawnRate && room.enemies.length < maxEnemies) {
             const types = ['normal', 'speed', 'heavy', 'scout'];
-            const type = types[Math.floor(Math.random() * Math.min(room.currentWave, 4))];
+            const typeIndex = Math.floor(Math.random() * Math.min(Math.max(room.currentWave, 1), types.length));
+            const type = types[typeIndex];
 
             const playerList = Object.values(room.players).filter(p => p.isAlive);
             if (playerList.length > 0) {
@@ -384,8 +425,8 @@ function startGameLoop(roomId) {
 
                 const enemy = new Enemy(
                     'enemy_' + (enemyIdCounter++),
-                    centerPlayer.worldX + Math.cos(angle) * 7,
-                    centerPlayer.worldY + Math.sin(angle) * 7,
+                    Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, centerPlayer.worldX + Math.cos(angle) * 7)),
+                    Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, centerPlayer.worldY + Math.sin(angle) * 7)),
                     type
                 );
 
