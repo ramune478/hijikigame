@@ -202,6 +202,35 @@ function drawPlayerShapeColored(ctx, x, y, size, color) {
     ctx.fill();
 }
 
+// draw hijiki sprite tinted by color (cached offscreen canvas per color)
+const _tintCache = new Map();
+function drawTintedHijiki(ctx, color, dx, dy, dw = 16, dh = 16) {
+    color = color || '#00ff00';
+    const key = color;
+    if (_tintCache.has(key)) {
+        ctx.drawImage(_tintCache.get(key), dx, dy, dw, dh);
+        return;
+    }
+
+    // create offscreen canvas
+    const off = document.createElement('canvas');
+    off.width = 16; off.height = 16;
+    const oc = off.getContext('2d');
+    // draw original sprite onto offscreen
+    oc.clearRect(0,0,16,16);
+    oc.drawImage(spriteSheet, SPRITE_POS.hijiki, 0, 16, 16, 0, 0, 16, 16);
+    // tint using source-atop
+    oc.globalCompositeOperation = 'source-atop';
+    oc.fillStyle = color;
+    oc.globalAlpha = 0.6;
+    oc.fillRect(0,0,16,16);
+    oc.globalAlpha = 1.0;
+    oc.globalCompositeOperation = 'source-over';
+
+    _tintCache.set(key, off);
+    ctx.drawImage(off, dx, dy, dw, dh);
+}
+
 function drawEnemyShape(ctx, x, y, size, type) {
     const colors = {
         'normal': '#4444ff',
@@ -245,7 +274,7 @@ let spawnRateup = 0;
 let shopStock = { speed: 20, range: 10, heal: 5, heal25: 20 };
 let overlayEffect = { text: "", timer: 0, opacity: 0, scale: 1.0 };
 
-const SPRITE_POS = { hijiki: 64, normal: 32, speed: 0, heavy: 48, scout: 16 }; // fixed sprite positions (speed was invalid)
+const SPRITE_POS = { hijiki: 64, normal: 32, speed: -0.1, heavy: 48, scout: 16 }; // fixed sprite positions (speed was invalid)
 
 // ===== WebSocket初期化 =====
 function initWebSocket() {
@@ -295,11 +324,21 @@ function handleServerMessage(data) {
             }
             break;
         case 'player_update':
-            if (otherPlayers[data.playerId]) {
-                otherPlayers[data.playerId].worldX = data.worldX;
-                otherPlayers[data.playerId].worldY = data.worldY;
-                otherPlayers[data.playerId].hp = data.hp;
-                otherPlayers[data.playerId].score = data.score;
+            // ensure we have an entry for this player (fix late-arrival updates)
+            if (data.playerId === playerId) {
+                // update self (server-authoritative HP/pos)
+                player.worldX = Number.isFinite(Number(data.worldX)) ? Number(data.worldX) : player.worldX;
+                player.worldY = Number.isFinite(Number(data.worldY)) ? Number(data.worldY) : player.worldY;
+                player.hp = Number.isFinite(Number(data.hp)) ? Number(data.hp) : player.hp;
+                player.score = Number.isFinite(Number(data.score)) ? Number(data.score) : player.score;
+                updateUI();
+            } else {
+                otherPlayers[data.playerId] = otherPlayers[data.playerId] || { id: data.playerId, nickname: 'player', color: '#ffff00', worldX:0, worldY:0, hp:100, score:0, isAlive:true };
+                otherPlayers[data.playerId].worldX = Number.isFinite(Number(data.worldX)) ? Number(data.worldX) : otherPlayers[data.playerId].worldX;
+                otherPlayers[data.playerId].worldY = Number.isFinite(Number(data.worldY)) ? Number(data.worldY) : otherPlayers[data.playerId].worldY;
+                otherPlayers[data.playerId].hp = Number.isFinite(Number(data.hp)) ? Number(data.hp) : otherPlayers[data.playerId].hp;
+                otherPlayers[data.playerId].score = Number.isFinite(Number(data.score)) ? Number(data.score) : otherPlayers[data.playerId].score;
+                updatePlayersListUI();
             }
             break;
         case 'game_state':
@@ -333,6 +372,17 @@ function handleServerMessage(data) {
         case 'enemy_killed':
             addChatMessage('キル', `${data.playerName}が敵を倒した (+${data.scoreGain})`, '#ffff00');
             break;
+        case 'enemy_damaged':
+            // update matching enemy hp/pos immediately for visual feedback
+            if (data.enemyId && enemies) {
+                const idx = enemies.findIndex(e => e.id === data.enemyId);
+                if (idx !== -1) {
+                    enemies[idx].hp = Number.isFinite(Number(data.hp)) ? Number(data.hp) : enemies[idx].hp;
+                    if (Number.isFinite(Number(data.worldX))) enemies[idx].worldX = Number(data.worldX);
+                    if (Number.isFinite(Number(data.worldY))) enemies[idx].worldY = Number(data.worldY);
+                }
+            }
+            break;
         case 'wave_clear':
             gameState = 'resting';
             currentWave = data.nextWave;
@@ -351,6 +401,23 @@ function handleServerMessage(data) {
             document.getElementById('chat-container').classList.remove('hidden');
             requestAnimationFrame(loop);
             break;
+        case 'players_snapshot':
+            // initialize all existing players sent by server
+            (data.players || []).forEach(p => {
+                if (p.id === playerId) return; // skip self
+                otherPlayers[p.id] = {
+                    id: p.id,
+                    nickname: p.nickname,
+                    color: p.color || '#ffff00',
+                    worldX: Number.isFinite(Number(p.worldX)) ? Number(p.worldX) : 0,
+                    worldY: Number.isFinite(Number(p.worldY)) ? Number(p.worldY) : 0,
+                    hp: Number.isFinite(Number(p.hp)) ? Number(p.hp) : 100,
+                    score: Number.isFinite(Number(p.score)) ? Number(p.score) : 0,
+                    isAlive: p.isAlive !== false
+                };
+            });
+            updatePlayersListUI();
+            break;
         case 'game_over':
             gameState = 'over';
             document.getElementById('res-rank').innerText = getRank(player.score);
@@ -360,6 +427,14 @@ function handleServerMessage(data) {
             break;
         case 'chat':
             addChatMessage(data.nickname, data.message, data.color);
+            break;
+        case 'player_died':
+            if (data.playerId === playerId) {
+                player.isAlive = false;
+            } else if (otherPlayers[data.playerId]) {
+                otherPlayers[data.playerId].isAlive = false;
+            }
+            updatePlayersListUI();
             break;
     }
 }
@@ -655,11 +730,18 @@ function update() {
                 if (ws && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({
                         type: 'attack_enemy',
-                        enemyId: 'local_' + i,
+                        enemyId: en.id || ('local_' + i),
                         damage: 0.5
                     }));
                 }
+                // local immediate feedback
                 en.hp -= 0.5;
+                // local visual knockback for responsiveness
+                const kx = (en.worldX - player.worldX) || (Math.random()-0.5);
+                const ky = (en.worldY - player.worldY) || (Math.random()-0.5);
+                const kdist = Math.sqrt(kx*kx + ky*ky) || 0.0001;
+                en.worldX += (kx / kdist) * 0.2;
+                en.worldY += (ky / kdist) * 0.2;
                 if(en.hp <= 0) enemyKilled(en, i);
             }
         }
@@ -790,7 +872,7 @@ function draw() {
         if (useShapeFallback) {
             drawPlayerShape(ctx, 64, 64, 16);
         } else {
-            ctx.drawImage(spriteSheet, SPRITE_POS.hijiki, 0, 16, 16, 64, 64, 16, 16);
+            drawTintedHijiki(ctx, playerColor || '#00ff00', 64, 64, 16, 16);
         }
     }
 
@@ -838,6 +920,9 @@ function draw() {
         mCtx.fillStyle = en.color; mCtx.fillRect(50 + en.worldX*0.78, 50 + en.worldY*0.78, 2, 2);
     });
 
+    // --- handle immediate enemy_damaged messages (server sends hp + optional pos) ---
+    // (handled in handleServerMessage -> case 'enemy_damaged')
+
     // 他プレイヤーの描画
     Object.values(otherPlayers).forEach(p => {
         if (p.isAlive) {
@@ -845,8 +930,7 @@ function draw() {
             if (useShapeFallback) {
                 drawPlayerShapeColored(ctx, dx, dy, 16, p.color);
             } else {
-                // draw the same hijiki sprite for other players (no tint)
-                ctx.drawImage(spriteSheet, SPRITE_POS.hijiki, 0, 16, 16, dx, dy, 16, 16);
+                drawTintedHijiki(ctx, p.color || '#ffff00', dx, dy, 16, 16);
             }
             mCtx.fillStyle = p.color || '#ffff00';
             mCtx.fillRect(50 + p.worldX*0.78, 50 + p.worldY*0.78, 2, 2);
@@ -856,7 +940,7 @@ function draw() {
     if (useShapeFallback) {
         drawPlayerShape(ctx, 64, 64, 16);
     } else {
-        ctx.drawImage(spriteSheet, SPRITE_POS.hijiki, 0, 16, 16, 64, 64, 16, 16);
+        drawTintedHijiki(ctx, playerColor || '#00ff00', 64, 64, 16, 16);
     }
     mCtx.fillStyle = "#00ff00"; mCtx.fillRect(50 + player.worldX*0.78, 50 + player.worldY*0.78, 3, 3);
 

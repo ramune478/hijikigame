@@ -45,6 +45,7 @@ class GameRoom {
         this.killCount = 0;
         this.targetKills = 5;
         this.loopInterval = null; // game loop interval handle
+        this.playerInvincibleTicks = {}; // per-player invincibility counter (server-side)
     }
 
     addPlayer(playerId, playerData) {
@@ -205,12 +206,25 @@ wss.on('connection', (ws) => {
                             friendlyFireEnabled: room.friendlyFireEnabled
                         }));
 
+                        // send full players snapshot to new client (fix: missing earlier-joined players)
+                        const playersSnapshot = Object.values(room.players).map(p => ({
+                            id: p.id,
+                            nickname: p.nickname,
+                            color: p.color,
+                            worldX: p.worldX,
+                            worldY: p.worldY,
+                            hp: p.hp,
+                            score: p.score,
+                            isAlive: p.isAlive
+                        }));
+                        ws.send(JSON.stringify({ type: 'players_snapshot', players: playersSnapshot }));
+
                         // if the room is already playing, make sure the joining client gets the start + current state
                         if (room.gameState === 'playing') {
                             ws.send(JSON.stringify({ type: 'game_start', gameState: 'playing', wave: room.currentWave }));
                             ws.send(JSON.stringify({
                                 type: 'game_state',
-                                enemies: room.enemies.map(e => ({ id: e.id, worldX: e.worldX, worldY: e.worldY, type: e.type, hp: e.hp })),
+                                enemies: room.enemies.map(e => ({ id: e.id, worldX: e.worldX, worldY: e.worldY, type: e.type, hp: e.hp, speed: e.speed, power: e.power, scoreVal: e.scoreVal, color: e.color })),
                                 gameState: room.gameState,
                                 wave: room.currentWave,
                                 enemyCount: room.enemies.length,
@@ -270,6 +284,14 @@ wss.on('connection', (ws) => {
                         const p = room.players[playerId];
                         
                         if (p && enemy) {
+                            // apply knockback to enemy away from attacker
+                            const dx = enemy.worldX - p.worldX;
+                            const dy = enemy.worldY - p.worldY;
+                            const dist = Math.sqrt(dx*dx + dy*dy) || 0.0001;
+                            const knockback = 0.4; // server-side knockback magnitude
+                            enemy.worldX += (dx / dist) * knockback;
+                            enemy.worldY += (dy / dist) * knockback;
+
                             if (enemy.takeDamage(data.damage || 0.5)) {
                                 p.score += Math.floor(enemy.scoreVal);
                                 p.skillCool = Math.min(1000, p.skillCool + 100);
@@ -311,10 +333,13 @@ wss.on('connection', (ws) => {
                                     }, 30000);
                                 }
                             } else {
+                                // include position so clients can show knockback immediately
                                 room.broadcastAll({
                                     type: 'enemy_damaged',
                                     enemyId: data.enemyId,
-                                    hp: enemy.hp
+                                    hp: enemy.hp,
+                                    worldX: enemy.worldX,
+                                    worldY: enemy.worldY
                                 });
                             }
                         }
@@ -481,7 +506,83 @@ function startGameLoop(roomId) {
             }
         }
 
+        // server-side enemy movement + enemy -> player damage + knockback
         room.enemies.forEach(enemy => {
+            let closestPlayer = null;
+            let closestDist = Infinity;
+
+            Object.values(room.players).forEach(p => {
+                if (p.isAlive) {
+                    const dx = p.worldX - enemy.worldX;
+                    const dy = p.worldY - enemy.worldY;
+                    const dist = Math.sqrt(dx * dx + dy * dy) || 0.0001;
+
+                    if (dist < closestDist) {
+                        closestDist = dist;
+                        closestPlayer = p;
+                    }
+                }
+            });
+
+            if (closestPlayer && closestDist > 0.1) {
+                const dx = closestPlayer.worldX - enemy.worldX;
+                const dy = closestPlayer.worldY - enemy.worldY;
+                const dist = Math.sqrt(dx * dx + dy * dy) || 0.0001;
+                enemy.worldX += (dx / dist) * enemy.speed;
+                enemy.worldY += (dy / dist) * enemy.speed;
+            }
+
+            enemy.worldX = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, enemy.worldX));
+            enemy.worldY = Math.max(-MAP_LIMIT, Math.min(MAP_LIMIT, enemy.worldY));
+
+            // enemy attack (server authoritative)
+            Object.values(room.players).forEach(p => {
+                if (!p.isAlive) return;
+                const pdx = p.worldX - enemy.worldX;
+                const pdy = p.worldY - enemy.worldY;
+                const pdist = Math.sqrt(pdx * pdx + pdy * pdy) || 0.0001;
+
+                // hit range (match client ~0.5)
+                if (pdist < 0.6) {
+                    const invKey = p.id;
+                    room.playerInvincibleTicks[invKey] = room.playerInvincibleTicks[invKey] || 0;
+                    if (room.playerInvincibleTicks[invKey] <= 0) {
+                        // apply damage
+                        p.hp = (Number.isFinite(Number(p.hp)) ? Number(p.hp) : 0) - enemy.power;
+                        if (p.hp <= 0) { p.hp = 0; p.isAlive = false; }
+
+                        // set invincible ticks (server tick units, match client short invuln)
+                        room.playerInvincibleTicks[invKey] = 5;
+
+                        // apply knockback to player
+                        const k = 0.3; // knockback amount
+                        p.worldX += (pdx / pdist) * k;
+                        p.worldY += (pdy / pdist) * k;
+
+                        // broadcast player_update immediately
+                        room.broadcastAll({
+                            type: 'player_update',
+                            playerId: p.id,
+                            worldX: p.worldX,
+                            worldY: p.worldY,
+                            hp: p.hp,
+                            score: p.score,
+                            angle: p.angle
+                        });
+
+                        if (!p.isAlive) {
+                            room.broadcastAll({ type: 'player_died', playerId: p.id, nickname: p.nickname });
+                        }
+                    }
+                }
+            });
+        });
+
+        // decrement invincibility ticks
+        Object.keys(room.playerInvincibleTicks).forEach(k => {
+            if (room.playerInvincibleTicks[k] > 0) room.playerInvincibleTicks[k]--;
+        });
+
             let closestPlayer = null;
             let closestDist = Infinity;
 
@@ -529,8 +630,8 @@ function startGameLoop(roomId) {
             killCount: room.killCount,
             targetKills: room.targetKills
         });
-    }, 50);
-}
+    }, 50;);
+};
 
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, '0.0.0.0', () => {
