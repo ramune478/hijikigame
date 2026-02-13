@@ -71,12 +71,14 @@
             プレイヤー名: <input type="text" id="player-name-input" placeholder="プレイヤー名">
             <br><br>
             必殺技選択<br>
-            <button onclick="startGame('ひじき豆')">1. ひじき豆</button>
-            <button onclick="startGame('縛り豆')">2. 縛り豆(クリア時スコア1.5倍)</button>
-            <button onclick="startGame('波動砲豆')">3. 波動砲豆</button>
-            <button onclick="startGame('ムービング豆')">4. ムービング豆</button>
-            <button onclick="startGame('侍豆')">5. 侍豆</button>
-            <button onclick="startGame('スピードブースター豆')">6. スピードブースター豆</button>
+            <button onclick="startGame('ひじき豆', false)">1. ひじき豆</button>
+            <button onclick="startGame('縛り豆', false)">2. 縛り豆(クリア時スコア1.5倍)</button>
+            <button onclick="startGame('波動砲豆', false)">3. 波動砲豆</button>
+            <button onclick="startGame('ムービング豆', false)">4. ムービング豆</button>
+            <button onclick="startGame('侍豆', false)">5. 侍豆</button>
+            <button onclick="startGame('スピードブースター豆', false)">6. スピードブースター豆</button>
+            <hr style="margin: 10px 0; border-color: #555;">
+            <button onclick="startGame(null, true)" style="background: #666; width: 100%; padding: 10px; font-size: 14px;">👁️ 観戦する</button>
         </div>
     </h2>
 
@@ -125,11 +127,6 @@
         <div id="multiplayer-panel" class="multiplayer-panel hidden">
             <h3 style="text-align: center; color: #00ccff; margin-bottom: 10px;">👥 プレイヤー</h3>
             <div id="players-list"></div>
-            <hr style="margin: 10px 0; border-color: #444;">
-            <label style="font-size: 12px;">
-                <input type="checkbox" id="friendly-fire-toggle" onchange="toggleFriendlyFire()"> 
-                フレンドリーファイア
-            </label>
         </div>
 
         <!-- チャットパネル -->
@@ -183,7 +180,7 @@ spriteSheet.onload = () => { useShapeFallback = false; };
 // マルチプレイ変数
 let playerId = null, playerColor = null, roomId = null, ws = null;
 let otherPlayers = {};
-let friendlyFireEnabled = false;
+let isSpectator = false; // spectator flag
 
 function drawPlayerShape(ctx, x, y, size) {
     ctx.fillStyle = "#00ff00";
@@ -291,7 +288,7 @@ function handleServerMessage(data) {
             playerId = data.playerId;
             playerColor = data.color;
             roomId = data.roomId;
-            friendlyFireEnabled = data.friendlyFireEnabled;
+            // remove friendlyFireEnabled (no longer used)
             break;
         case 'existing_player':
             otherPlayers[data.playerId] = {
@@ -302,9 +299,12 @@ function handleServerMessage(data) {
                 worldY: Number.isFinite(Number(data.worldY)) ? Number(data.worldY) : 0,
                 hp: Number.isFinite(Number(data.hp)) ? Number(data.hp) : 100,
                 score: Number.isFinite(Number(data.score)) ? Number(data.score) : 0,
-                isAlive: data.isAlive !== false
+                isAlive: data.isAlive !== false,
+                isSpectator: data.isSpectator || false
             };
-            addChatMessage('システム', `${data.nickname}がゲーム中です`, '#888');
+            if (!data.isSpectator) {
+                addChatMessage('システム', `${data.nickname}がゲーム中です`, '#888');
+            }
             break;
         case 'player_joined':
             otherPlayers[data.playerId] = otherPlayers[data.playerId] || {};
@@ -316,7 +316,10 @@ function handleServerMessage(data) {
             otherPlayers[data.playerId].hp = Number.isFinite(Number(otherPlayers[data.playerId].hp)) ? otherPlayers[data.playerId].hp : 100;
             otherPlayers[data.playerId].score = Number.isFinite(Number(otherPlayers[data.playerId].score)) ? otherPlayers[data.playerId].score : 0;
             otherPlayers[data.playerId].isAlive = true;
-            addChatMessage('システム', `${data.nickname}が参加しました`, '#00ff00');
+            otherPlayers[data.playerId].isSpectator = data.isSpectator || false;
+            if (!data.isSpectator) {
+                addChatMessage('システム', `${data.nickname}が参加しました`, '#00ff00');
+            }
             break;
         case 'player_left':
             if (otherPlayers[data.playerId]) {
@@ -370,7 +373,7 @@ function handleServerMessage(data) {
             document.getElementById('kill-target').innerText = data.targetKills || 5;
             break;
         case 'enemy_killed':
-            addChatMessage('キル', `${data.playerName}が敵を倒した (+${data.scoreGain})`, '#ffff00');
+            // no message for enemy kills (silent removal per design)
             break;
         case 'enemy_damaged':
             // update matching enemy hp/pos immediately for visual feedback
@@ -392,6 +395,9 @@ function handleServerMessage(data) {
         case 'wave_start':
             gameState = 'playing';
             currentWave = data.wave;
+            // revive player (recover from spectating after death)
+            player.isAlive = true;
+            player.hp = 100;
             break;
         case 'game_start':
             gameState = 'playing';
@@ -413,7 +419,8 @@ function handleServerMessage(data) {
                     worldY: Number.isFinite(Number(p.worldY)) ? Number(p.worldY) : 0,
                     hp: Number.isFinite(Number(p.hp)) ? Number(p.hp) : 100,
                     score: Number.isFinite(Number(p.score)) ? Number(p.score) : 0,
-                    isAlive: p.isAlive !== false
+                    isAlive: p.isAlive !== false,
+                    isSpectator: p.isSpectator || false
                 };
             });
             updatePlayersListUI();
@@ -439,10 +446,11 @@ function handleServerMessage(data) {
     }
 }
 
-function startGame(choice) {
+function startGame(choice, spectate = false) {
     const roomIdInput = document.getElementById('room-id-input').value.trim();
-    const playerNameInput = document.getElementById('player-name-input').value.trim();
-    if (!playerNameInput) { alert('プレイヤー名を入力してください'); return; }
+    const playerNameInput = spectate ? 'Spectator' : document.getElementById('player-name-input').value.trim();
+    if (!spectate && !playerNameInput) { alert('プレイヤー名を入力してください'); return; }
+    isSpectator = spectate;
     player.abilityType = choice;
     initWebSocket();
     setTimeout(() => {
@@ -451,7 +459,8 @@ function startGame(choice) {
                 type: 'join_game',
                 roomId: roomIdInput || 'room_default',
                 nickname: playerNameInput,
-                abilityType: choice
+                abilityType: choice,
+                isSpectator: spectate
             }));
         }
     }, 500);
@@ -502,10 +511,7 @@ function handleChatKeyPress(event) {
 } // pressing Enter will send and blur (prevent movement while chatting)
 
 function toggleFriendlyFire() {
-    const enabled = document.getElementById('friendly-fire-toggle').checked;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'toggle_friendly_fire', enabled: enabled }));
-    }
+    // removed: friendly fire is disabled
 }
 
 function updateUI() {
@@ -529,14 +535,17 @@ function updateUI() {
 function updatePlayersListUI() {
     const playersList = document.getElementById('players-list');
     playersList.innerHTML = '';
-    const selfCard = document.createElement('div');
-    selfCard.className = 'player-card self';
-    selfCard.innerHTML = `<div style="color: ${playerColor};">あなた</div><div style="font-size: 11px;">HP: ${Math.ceil(player.hp)}/100 | ${player.score}</div>`;
-    playersList.appendChild(selfCard);
+    if (!isSpectator) {
+        const selfCard = document.createElement('div');
+        selfCard.className = 'player-card self';
+        selfCard.innerHTML = `<div style="color: ${playerColor};">あなた</div><div style="font-size: 11px;">HP: ${Math.ceil(player.hp)}/100 | ${player.score}</div>`;
+        playersList.appendChild(selfCard);
+    }
     Object.values(otherPlayers).forEach(p => {
         const card = document.createElement('div');
+        let label = p.isSpectator ? `👁️ ${p.nickname}` : p.nickname;
         card.className = 'player-card' + (p.isAlive ? '' : ' dead');
-        card.innerHTML = `<div style="color: ${p.color};">${p.nickname}</div><div style="font-size: 11px;">HP: ${Math.ceil(p.hp)}/100 | ${p.score}</div>`;
+        card.innerHTML = `<div style="color: ${p.color};">${label}</div><div style="font-size: 11px;">HP: ${Math.ceil(p.hp)}/100 | ${p.score}</div>`;
         playersList.appendChild(card);
     });
 }
@@ -653,6 +662,7 @@ function buyUpgrade(type) {
 
 function update() {
     if (!gameState || gameState === 'setup' || gameState === 'paused' || gameState === 'over') return;
+    if (isSpectator) return; // spectators don't update
 
     if (skillEffect > 0) skillEffect--;
     if (beamActive > 0) {
@@ -746,22 +756,7 @@ function update() {
             }
         }
 
-        // --- friendly-fire: attack other players when in range and allowed ---
-        if (player.isAttacking && friendlyFireEnabled) {
-            Object.values(otherPlayers).forEach(op => {
-                if (!op.isAlive) return;
-                const pdx = op.worldX - player.worldX, pdy = op.worldY - player.worldY;
-                const pdist = Math.sqrt(pdx*pdx + pdy*pdy) || 0;
-                if (pdist < player.weaponRange) {
-                    const angleToP = Math.atan2(pdy, pdx);
-                    let aDiffP = Math.abs(player.angle - angleToP);
-                    if (aDiffP > Math.PI) aDiffP = Math.PI * 2 - aDiffP;
-                    if (aDiffP < 1.0 && ws && ws.readyState === WebSocket.OPEN) {
-                        ws.send(JSON.stringify({ type: 'damage_player', targetId: op.id, damage: 0.5 }));
-                    }
-                }
-            });
-        }
+        // friendly-fire disabled (removed per user request)
     });
 
     drops.forEach((d, i) => {

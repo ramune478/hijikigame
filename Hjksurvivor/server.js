@@ -37,6 +37,7 @@ class GameRoom {
     constructor(roomId) {
         this.roomId = roomId;
         this.players = {};
+        this.spectators = {}; // spectators: can watch but not participate
         this.enemies = [];
         this.gameState = 'waiting';
         this.currentWave = 1;
@@ -56,7 +57,8 @@ class GameRoom {
 
     removePlayer(playerId) {
         delete this.players[playerId];
-        return Object.keys(this.players).length === 0;
+        delete this.spectators[playerId];
+        return Object.keys(this.players).length === 0 && Object.keys(this.spectators).length === 0;
     }
 
     getPlayerCount() {
@@ -70,6 +72,12 @@ class GameRoom {
                 try { p.ws.send(msg); } catch (e) { /* ignore send errors */ }
             }
         });
+        // also send to spectators
+        Object.values(this.spectators).forEach(s => {
+            if (s.ws && s.ws.readyState === WebSocket.OPEN && s.id !== excludeId) {
+                try { s.ws.send(msg); } catch (e) { /* ignore send errors */ }
+            }
+        });
     }
 
     broadcastAll(data) {
@@ -77,6 +85,12 @@ class GameRoom {
         Object.values(this.players).forEach(p => {
             if (p.ws && p.ws.readyState === WebSocket.OPEN) {
                 try { p.ws.send(msg); } catch (e) { /* ignore send errors */ }
+            }
+        });
+        // also send to spectators
+        Object.values(this.spectators).forEach(s => {
+            if (s.ws && s.ws.readyState === WebSocket.OPEN) {
+                try { s.ws.send(msg); } catch (e) { /* ignore send errors */ }
             }
         });
     }
@@ -134,13 +148,14 @@ wss.on('connection', (ws) => {
                 case 'join_game':
                     playerId = 'player_' + Date.now() + '_' + Math.random().toString(36).slice(2, 11);
                     roomId = (typeof data.roomId === 'string' && data.roomId.trim()) ? data.roomId : 'room_default';
+                    const isSpectator = data.isSpectator === true; // check if joining as spectator
 
                     if (!gameRooms[roomId]) {
                         gameRooms[roomId] = new GameRoom(roomId);
                     }
 
                     room = gameRooms[roomId];
-                    const colorIndex = Object.keys(room.players).length % 4;
+                    const colorIndex = (Object.keys(room.players).length + Object.keys(room.spectators).length) % 4;
 
                     const playerData = {
                         id: playerId,
@@ -159,16 +174,20 @@ wss.on('connection', (ws) => {
                         angle: 0,
                         skillCool: 0,
                         isAlive: true,
-                        kills: 0
+                        kills: 0,
+                        isSpectator: isSpectator
                     };
 
-                    if (!room.addPlayer(playerId, playerData)) {
+                    if (isSpectator) {
+                        room.spectators[playerId] = playerData;
+                    } else if (!room.addPlayer(playerId, playerData)) {
                         try { ws.send(JSON.stringify({ type: 'error', message: 'ルームが満員です' })); } catch (e) {}
                         return;
                     }
 
-                    // send existing players to the new client
-                    Object.values(room.players).forEach(p => {
+                    // send existing players to the new client (include both players and spectators)
+                    const allUsers = { ...room.players, ...room.spectators };
+                    Object.values(allUsers).forEach(p => {
                         if (p.id !== playerId) {
                             try {
                                 ws.send(JSON.stringify({
@@ -181,20 +200,22 @@ wss.on('connection', (ws) => {
                                     hp: p.hp,
                                     score: p.score,
                                     abilityType: p.abilityType,
-                                    isAlive: p.isAlive
+                                    isAlive: p.isAlive,
+                                    isSpectator: p.isSpectator || false
                                 }));
                             } catch (e) {}
                         }
                     });
 
-                    room.broadcast({
+                    room.broadcastAll({
                         type: 'player_joined',
                         playerId: playerId,
                         nickname: playerData.nickname,
                         color: playerData.color,
                         abilityType: playerData.abilityType,
+                        isSpectator: isSpectator,
                         playerCount: room.getPlayerCount()
-                    }, playerId);
+                    });
 
                     try {
                         ws.send(JSON.stringify({
@@ -206,8 +227,9 @@ wss.on('connection', (ws) => {
                             friendlyFireEnabled: room.friendlyFireEnabled
                         }));
 
-                        // send full players snapshot to new client (fix: missing earlier-joined players)
-                        const playersSnapshot = Object.values(room.players).map(p => ({
+                        // send full players snapshot to new client (fix: missing earlier-joined players + include spectators)
+                        const allSnap = { ...room.players, ...room.spectators };
+                        const playersSnapshot = Object.values(allSnap).map(p => ({
                             id: p.id,
                             nickname: p.nickname,
                             color: p.color,
@@ -215,7 +237,8 @@ wss.on('connection', (ws) => {
                             worldY: p.worldY,
                             hp: p.hp,
                             score: p.score,
-                            isAlive: p.isAlive
+                            isAlive: p.isAlive,
+                            isSpectator: p.isSpectator || false
                         }));
                         ws.send(JSON.stringify({ type: 'players_snapshot', players: playersSnapshot }));
 
@@ -234,7 +257,7 @@ wss.on('connection', (ws) => {
                         }
                     } catch (e) {}
 
-                    if (room.getPlayerCount() >= 1 && room.gameState === 'waiting') {
+                    if (!isSpectator && room.getPlayerCount() >= 1 && room.gameState === 'waiting') {
                         room.gameState = 'playing';
                         room.broadcastAll({
                             type: 'game_start',
@@ -297,14 +320,7 @@ wss.on('connection', (ws) => {
                                 p.skillCool = Math.min(1000, p.skillCool + 100);
                                 p.kills = (p.kills || 0) + 1;
                                 room.killCount++;
-
-                                room.broadcastAll({
-                                    type: 'enemy_killed',
-                                    enemyId: data.enemyId,
-                                    killedBy: playerId,
-                                    playerName: p.nickname,
-                                    scoreGain: enemy.scoreVal
-                                });
+                                // no broadcast for enemy_killed (silent removal)
 
                                 room.enemies = room.enemies.filter(e => e.id !== data.enemyId);
 
@@ -323,6 +339,9 @@ wss.on('connection', (ws) => {
                                     setTimeout(() => {
                                         if (gameRooms[roomId] && gameRooms[roomId].gameState === 'resting') {
                                             const r = gameRooms[roomId];
+                                            // revive all players (including spectators) + reset HP
+                                            Object.values(r.players).forEach(p => { p.isAlive = true; p.hp = 100; });
+                                            Object.values(r.spectators).forEach(s => { s.isAlive = true; s.hp = 100; });
                                             r.gameState = 'playing';
                                             r.broadcastAll({
                                                 type: 'wave_start',
@@ -436,6 +455,9 @@ wss.on('connection', (ws) => {
                         setTimeout(() => {
                             if (gameRooms[roomId] && gameRooms[roomId].gameState === 'resting') {
                                 const r = gameRooms[roomId];
+                                // revive all players (including spectators) + reset HP
+                                Object.values(r.players).forEach(p => { p.isAlive = true; p.hp = 100; });
+                                Object.values(r.spectators).forEach(s => { s.isAlive = true; s.hp = 100; });
                                 r.gameState = 'playing';
                                 r.broadcastAll({
                                     type: 'wave_start',
